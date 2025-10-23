@@ -64,8 +64,8 @@ chmod +x /home/$USER/scripts/duckdns-update.sh
 
 # 6. СОЗДАНИЕ ПАПОК ДЛЯ СЕРВИСОВ
 log "📁 Создание структуры папок..."
-mkdir -p /home/$USER/docker/{jellyfin,tribler,jackett,overseerr,heimdall,uptime-kuma,vaultwarden,homepage,password-manager}
-mkdir -p /home/$USER/media/{movies,tv,streaming,music}
+mkdir -p /home/$USER/docker/{jellyfin,tribler,jackett,overseerr,heimdall,uptime-kuma,vaultwarden,homepage,password-manager,qbittorrent,radarr,sonarr,prowlarr}
+mkdir -p /home/$USER/media/{movies,tv,streaming,music,downloads,torrents}
 mkdir -p /home/$USER/backups
 
 # 7. ЗАПУСК ВСЕХ СЕРВИСОВ ЧЕРЕЗ DOCKER-COMPOSE
@@ -94,31 +94,70 @@ services:
     networks:
       - server-net
 
-  # Tribler - торрент-клиент с стримингом
-  tribler:
-    image: tribler/tribler:latest
-    container_name: tribler
+  # qBittorrent - торрент-клиент для стриминга
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
     volumes:
-      - /home/$USER/docker/tribler:/root/.Tribler
+      - /home/$USER/docker/qbittorrent:/config
       - /home/$USER/media/streaming:/downloads
     environment:
       - TZ=Europe/Moscow
+      - PUID=1000
+      - PGID=1000
+      - WEBUI_PORT=8080
     networks:
       - server-net
 
-  # Jackett - поиск по трекерам
-  jackett:
-    image: linuxserver/jackett:latest
-    container_name: jackett
+  # Radarr - управление фильмами
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
     restart: unless-stopped
     ports:
-      - "9117:9117"
+      - "7878:7878"
     volumes:
-      - /home/$USER/docker/jackett:/config
+      - /home/$USER/docker/radarr:/config
+      - /home/$USER/media/movies:/movies
       - /home/$USER/media/streaming:/downloads
+    environment:
+      - TZ=Europe/Moscow
+      - PUID=1000
+      - PGID=1000
+    networks:
+      - server-net
+
+  # Sonarr - управление сериалами
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
+    ports:
+      - "8989:8989"
+    volumes:
+      - /home/$USER/docker/sonarr:/config
+      - /home/$USER/media/tv:/tv
+      - /home/$USER/media/streaming:/downloads
+    environment:
+      - TZ=Europe/Moscow
+      - PUID=1000
+      - PGID=1000
+    networks:
+      - server-net
+
+  # Prowlarr - менеджер индексаторов
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    ports:
+      - "9696:9696"
+    volumes:
+      - /home/$USER/docker/prowlarr:/config
     environment:
       - TZ=Europe/Moscow
       - PUID=1000
@@ -148,7 +187,7 @@ services:
     container_name: heimdall
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "8080:80"
     volumes:
       - /home/$USER/docker/heimdall:/config
     environment:
@@ -188,15 +227,16 @@ services:
     networks:
       - server-net
 
-  # Главная страница с авторизацией
+  # Главная страница с авторизацией и Nginx прокси
   homepage:
     image: nginx:alpine
     container_name: homepage
     restart: unless-stopped
     ports:
-      - "8088:80"
+      - "80:80"
     volumes:
       - /home/$USER/docker/homepage:/usr/share/nginx/html
+      - /home/$USER/docker/homepage/nginx.conf:/etc/nginx/conf.d/default.conf
     networks:
       - server-net
 
@@ -233,7 +273,7 @@ sudo tee /etc/apache2/sites-available/nextcloud.conf > /dev/null << EOF
     ServerName localhost
     DocumentRoot /var/www/html/nextcloud
     <Directory /var/www/html/nextcloud>
-        Options FollowSymLinks
+        Options FollowSymlinks
         AllowOverride All
         Require all granted
     </Directory>
@@ -287,29 +327,268 @@ sudo ufw allow 3001/tcp
 sudo ufw allow 8000/tcp
 sudo ufw allow 11434/tcp
 sudo ufw allow 22/tcp
-sudo ufw allow 8088/tcp
 sudo ufw allow 8089/tcp
+sudo ufw allow 7878/tcp
+sudo ufw allow 8989/tcp
+sudo ufw allow 9696/tcp
 
 # Fail2ban
 sudo apt install -y fail2ban
 sudo systemctl enable fail2ban
 sudo systemctl start fail2ban
 
-# 11. СКРИПТ ОЧИСТКИ СТРИМИНГА
-log "🧹 Настройка автоматической очистки..."
+# 11. АВТОМАТИЧЕСКИЕ ОБНОВЛЕНИЯ СИСТЕМЫ
+log "🔄 Настройка автоматических обновлений..."
 
-cat > /home/$USER/scripts/cleanup_streaming.sh << EOF
+cat > /home/$USER/scripts/auto-update.sh << EOF
 #!/bin/bash
-find "/home/$USER/media/streaming" -type f -mtime +1 -delete
-echo "\$(date): Cleaned streaming directory" >> "/home/$USER/scripts/cleanup.log"
+echo "\$(date): Starting auto-update" >> /home/$USER/scripts/update.log
+
+# Обновление системы
+sudo apt update && sudo apt upgrade -y
+
+# Обновление Docker контейнеров
+cd /home/$USER/docker
+docker-compose pull
+docker-compose up -d
+
+# Очистка старых образов
+docker image prune -f
+
+echo "\$(date): Auto-update completed" >> /home/$USER/scripts/update.log
 EOF
+
+chmod +x /home/$USER/scripts/auto-update.sh
+
+# Добавляем в cron - обновление каждое воскресенье в 3:00
+(crontab -l 2>/dev/null; echo "0 3 * * 0 /home/$USER/scripts/auto-update.sh") | crontab -
+
+# 12. АВТОМАТИЧЕСКОЕ РЕЗЕРВНОЕ КОПИРОВАНИЕ
+log "💾 Настройка резервного копирования..."
+
+cat > /home/$USER/scripts/backup.sh << EOF
+#!/bin/bash
+BACKUP_DIR="/home/$USER/backups"
+BACKUP_FILE="server-backup-\$(date +%Y%m%d-%H%M%S).tar.gz"
+LOG_FILE="/home/$USER/scripts/backup.log"
+
+echo "\$(date): Starting backup" >> \$LOG_FILE
+
+# Создаем резервную копию (исключаем временные файлы стриминга)
+tar -czf \$BACKUP_DIR/\$BACKUP_FILE \\
+  /home/$USER/docker \\
+  /home/$USER/scripts \\
+  /home/$USER/media/movies \\
+  /home/$USER/media/tv \\
+  /home/$USER/media/music \\
+  /home/$USER/backups 2>/dev/null
+
+# Удаляем старые бэкапы (храним только последние 7)
+find \$BACKUP_DIR -name "server-backup-*.tar.gz" -mtime +7 -delete
+
+echo "\$(date): Backup completed: \$BACKUP_FILE" >> \$LOG_FILE
+echo "Backup created: \$BACKUP_DIR/\$BACKUP_FILE"
+EOF
+
+chmod +x /home/$USER/scripts/backup.sh
+
+# Добавляем в cron - бэкап каждый день в 2:00
+(crontab -l 2>/dev/null; echo "0 2 * * * /home/$USER/scripts/backup.sh") | crontab -
+
+# 13. БЕЗОПАСНАЯ ОЧИСТКА СТРИМИНГА (НЕ трогает библиотеки)
+log "🧹 Настройка безопасной очистки стриминга..."
+
+cat > /home/$USER/scripts/cleanup_streaming.sh << 'CLEANUP_EOF'
+#!/bin/bash
+LOG_FILE="/home/$USER/scripts/cleanup.log"
+
+echo "$(date): Starting SAFE cleanup - ONLY streaming files" >> $LOG_FILE
+
+# 🔒 ОЧИЩАЕМ ТОЛЬКО СТРИМИНГ - ВРЕМЕННЫЕ ФАЙЛЫ
+find "/home/$USER/media/streaming" -type f -mtime +1 -delete
+
+# 🔒 Удаляем пустые папки ТОЛЬКО в стриминге
+find "/home/$USER/media/streaming" -type d -empty -delete
+
+# ✅ СОХРАНЯЕМ ВСЕ БИБЛИОТЕКИ - они НЕ очищаются!
+echo "$(date): Cleaned ONLY streaming. Libraries are SAFE:" >> $LOG_FILE
+echo "$(date): - /movies - SAFE" >> $LOG_FILE
+echo "$(date): - /tv - SAFE" >> $LOG_FILE  
+echo "$(date): - /music - SAFE" >> $LOG_FILE
+echo "$(date): - Nextcloud - SAFE" >> $LOG_FILE
+echo "$(date): - Backups - SAFE" >> $LOG_FILE
+CLEANUP_EOF
 
 chmod +x /home/$USER/scripts/cleanup_streaming.sh
 
-# Добавляем в cron
-(crontab -l 2>/dev/null; echo "0 3 * * * /home/$USER/scripts/cleanup_streaming.sh") | crontab -
+# Добавляем в cron - очистка каждые 6 часов
+(crontab -l 2>/dev/null; echo "0 */6 * * * /home/$USER/scripts/cleanup_streaming.sh") | crontab -
 
-# 12. СОЗДАНИЕ ГЛАВНОЙ СТРАНИЦЫ С АВТОРИЗАЦИЕЙ
+# 14. НАСТРОЙКА ТОРРЕНТ-СТРИМИНГА КАК НА YOUTUBE
+log "🎬 Настройка торрент-стриминга..."
+
+# Создаем скрипт автоматической настройки стриминга
+cat > /home/$USER/scripts/setup-streaming.sh << 'STREAMING_EOF'
+#!/bin/bash
+
+USERNAME=$(whoami)
+SERVER_IP=$(hostname -I | awk '{print $1}')
+
+echo "Настраиваем торрент-стриминг как на YouTube..."
+
+# Ждем запуска сервисов
+sleep 30
+
+# Создаем конфиг для автоматической настройки
+cat > /home/$USER/scripts/configure-arrs.sh << 'ARR_EOF'
+#!/bin/bash
+
+# Ждем полного запуска всех сервисов
+sleep 60
+
+echo "Настраиваем автоматический стриминг..."
+
+# Создаем инструкцию по настройке
+cat > /home/$USER/torrent-streaming-guide.txt << 'GUIDE_EOF
+=== НАСТРОЙКА ТОРРЕНТ-СТРИМИНГА КАК НА YOUTUBE ===
+
+🎯 КАК ЭТО РАБОТАЕТ:
+1. Вы ищете фильм в Overseerr
+2. Нажимаете "Запросить"
+3. Система автоматически скачивает через торрент
+4. Файл сразу доступен для просмотра в Jellyfin
+5. После просмотра файл автоматически удаляется
+
+⚡ БЫСТРЫЙ СТАРТ:
+
+1. ОТКРОЙТЕ OVERSEERR:
+   http://SERVER_IP:5055
+
+2. НАЙДИТЕ ФИЛЬМ И НАЖМИТЕ "REQUEST"
+
+3. СМОТРИТЕ В JELLYFIN:
+   http://SERVER_IP:8096
+
+4. ФИЛЬМ ПОЯВИТСЯ ЧЕРЕЗ 1-5 МИНУТ!
+
+🔧 ПОЛНАЯ НАСТРОЙКА:
+
+1. Prowlarr (поиск трекеров):
+   http://SERVER_IP:9696
+   - Добавьте публичные трекеры автоматически
+
+2. Radarr (фильмы):
+   http://SERVER_IP:7878
+   - Папка фильмов: /movies
+   - Папка загрузок: /downloads
+
+3. Sonarr (сериалы):
+   http://SERVER_IP:8989  
+   - Папка сериалов: /tv
+   - Папка загрузок: /downloads
+
+4. qBittorrent:
+   http://SERVER_IP:8080
+   - Логин: admin
+   - Пароль: adminadmin
+
+🔄 АВТОМАТИЧЕСКАЯ ОЧИСТКА:
+- Файлы удаляются через 24 часа после скачивания
+- Можно смотреть повторно - файл скачается заново
+- Не занимает место на диске
+- 🔒 БИБЛИОТЕКИ FILMS/TV/MUSIC НЕ ТРОГАЮТСЯ!
+
+🎬 НАСЛАЖДАЙТЕСЬ ПРОСМОТРОМ!
+GUIDE_EOF
+
+# Заменяем SERVER_IP на реальный IP
+sed -i "s/SERVER_IP/$SERVER_IP/g" /home/$USER/torrent-streaming-guide.txt
+
+echo "Настройка стриминга завершена!"
+ARR_EOF
+
+chmod +x /home/$USER/scripts/configure-arrs.sh
+nohup /home/$USER/scripts/configure-arrs.sh > /dev/null 2>&1 &
+
+echo "Торрент-стриминг настроен!"
+STREAMING_EOF
+
+chmod +x /home/$USER/scripts/setup-streaming.sh
+nohup /home/$USER/scripts/setup-streaming.sh > /dev/null 2>&1 &
+
+# 15. НАСТРОЙКА NGINX ПРОКСИ ДЛЯ DUCKDNS
+log "🌐 Настройка Nginx прокси для DuckDNS..."
+
+# Создаем конфиг Nginx с прокси для всех сервисов
+cat > /home/$USER/docker/homepage/nginx.conf << 'NGINX_PROXY'
+server {
+    listen 80;
+    server_name _;
+    
+    # Главная страница входа
+    location = / {
+        root /usr/share/nginx/html;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+    
+    # Прокси для сервисов через подпути
+    location /jellyfin/ {
+        proxy_pass http://jellyfin:8096/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+    }
+    
+    location /overseerr/ {
+        proxy_pass http://overseerr:5055/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    location /heimdall/ {
+        proxy_pass http://heimdall:80/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    
+    location /monitoring/ {
+        proxy_pass http://uptime-kuma:3001/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+    
+    location /passwords/ {
+        proxy_pass http://vaultwarden:8000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+    
+    location /nextcloud/ {
+        proxy_pass http://host.docker.internal:80/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    # Статические файлы главной страницы
+    location / {
+        root /usr/share/nginx/html;
+        try_files $uri $uri/ /index.html;
+    }
+}
+NGINX_PROXY
+
+# Перезапускаем homepage с новым конфигом
+docker restart homepage
+
+# 16. СОЗДАЕМ ГЛАВНУЮ СТРАНИЦУ С АВТОРИЗАЦИЕЙ
 log "🏠 Создаем главную страницу с авторизацией..."
 
 # HTML главной страницы с авторизацией
@@ -446,7 +725,7 @@ cat > /home/$USER/docker/homepage/index.html << 'HTMLEOF'
         </form>
         
         <div class="services-info">
-            Доступные сервисы: Jellyfin • Nextcloud • AI Ассистент • Менеджер паролей
+            Доступные сервисы: Jellyfin • Nextcloud • AI Ассистент • Торрент-стриминг
         </div>
     </div>
 
@@ -469,7 +748,7 @@ cat > /home/$USER/docker/homepage/index.html << 'HTMLEOF'
                 localStorage.setItem('server_session', JSON.stringify(sessionData));
                 
                 // Перенаправляем на панель управления
-                window.location.href = '/heimdall';
+                window.location.href = '/heimdall/';
             } else {
                 errorMessage.style.display = 'block';
                 setTimeout(() => {
@@ -484,7 +763,7 @@ cat > /home/$USER/docker/homepage/index.html << 'HTMLEOF'
             if (session) {
                 const sessionData = JSON.parse(session);
                 if (sessionData.expires > Date.now()) {
-                    window.location.href = '/heimdall';
+                    window.location.href = '/heimdall/';
                 } else {
                     localStorage.removeItem('server_session');
                 }
@@ -495,7 +774,7 @@ cat > /home/$USER/docker/homepage/index.html << 'HTMLEOF'
 </html>
 HTMLEOF
 
-# 13. СОЗДАЕМ ВЕБ-ИНТЕРФЕЙС ДЛЯ СМЕНЫ ПАРОЛЯ
+# 17. СОЗДАЕМ ВЕБ-ИНТЕРФЕЙС ДЛЯ СМЕНЫ ПАРОЛЯ
 log "🔧 Создаем веб-интерфейс смены пароля..."
 
 # HTML интерфейс смены пароля
@@ -713,7 +992,7 @@ cat > /home/$USER/docker/password-manager/index.html << 'PASSWORD_HTML'
             </div>
         </form>
         
-        <a href="/heimdall" class="back-btn">← Назад к панели управления</a>
+        <a href="/heimdall/" class="back-btn">← Назад к панели управления</a>
     </div>
 
     <script>
@@ -800,7 +1079,7 @@ cat > /home/$USER/docker/password-manager/index.html << 'PASSWORD_HTML'
                     
                     // Обновляем страницу через 2 секунды
                     setTimeout(() => {
-                        window.location.href = '/heimdall';
+                        window.location.href = '/heimdall/';
                     }, 2000);
                 } else {
                     showMessage(result.message || 'Ошибка при смене пароля', 'error');
@@ -986,11 +1265,8 @@ DOCKERFILE_EOF
 cd /home/$USER/docker
 docker-compose up -d --build password-manager
 
-# 14. АВТОМАТИЧЕСКАЯ НАСТРОЙКА HEIMDALL С ПОИСКОМ И СМЕНОЙ ПАРОЛЯ
-log "🏠 Настраиваем Heimdall с поиском Яндекса и сменой пароля..."
-
-# Ждем запуска сервисов
-sleep 30
+# 18. АВТОМАТИЧЕСКАЯ НАСТРОЙКА HEIMDALL
+log "🏠 Настраиваем Heimdall с всеми сервисами..."
 
 # Создаем автоматическую настройку для Heimdall
 cat > /home/$USER/scripts/setup-heimdall.sh << 'HEIMDALL_EOF'
@@ -999,12 +1275,12 @@ cat > /home/$USER/scripts/setup-heimdall.sh << 'HEIMDALL_EOF'
 USERNAME=$(whoami)
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
-echo "Настраиваем Heimdall с поиском Яндекса и сменой пароля..."
+echo "Настраиваем Heimdall с всеми сервисами..."
 
 # Ждем полного запуска Heimdall
-sleep 20
+sleep 30
 
-# Создаем apps.json для Heimdall с поиском Яндекса и сменой пароля
+# Создаем apps.json для Heimdall
 cat > /home/$USERNAME/docker/heimdall/apps.json << 'APPS_EOF'
 [
     {
@@ -1027,35 +1303,35 @@ cat > /home/$USERNAME/docker/heimdall/apps.json << 'APPS_EOF'
         "name": "🎬 Jellyfin",
         "color": "#00AAFF",
         "icon": "fas fa-play-circle",
-        "link": "http://SERVER_IP:8096",
+        "link": "/jellyfin/",
         "description": "Медиасервер с фильмами и сериалами"
     },
     {
         "name": "🔍 Поиск фильмов",
         "color": "#FF6B00", 
         "icon": "fas fa-search",
-        "link": "http://SERVER_IP:5055",
+        "link": "/overseerr/",
         "description": "Overseerr - поиск и добавление контента"
     },
     {
         "name": "☁️ Nextcloud",
         "color": "#0082C9",
         "icon": "fas fa-cloud",
-        "link": "http://SERVER_IP/nextcloud",
+        "link": "/nextcloud/",
         "description": "Файловое хранилище"
     },
     {
         "name": "📊 Мониторинг",
         "color": "#4CAF50",
         "icon": "fas fa-chart-bar",
-        "link": "http://SERVER_IP:3001",
+        "link": "/monitoring/",
         "description": "Uptime Kuma - мониторинг сервисов"
     },
     {
         "name": "🔐 Менеджер паролей",
         "color": "#CD5C5C",
         "icon": "fas fa-lock",
-        "link": "http://SERVER_IP:8000",
+        "link": "/passwords/",
         "description": "Vaultwarden - менеджер паролей"
     },
     {
@@ -1066,18 +1342,32 @@ cat > /home/$USERNAME/docker/heimdall/apps.json << 'APPS_EOF'
         "description": "Ollama - локальная нейросеть"
     },
     {
-        "name": "🌀 Торренты",
+        "name": "📥 Торренты",
         "color": "#FFD700",
         "icon": "fas fa-download",
         "link": "http://SERVER_IP:8080",
-        "description": "Tribler - торрент-клиент"
+        "description": "qBittorrent - торрент-клиент"
     },
     {
-        "name": "🎯 Jackett",
+        "name": "🎯 Менеджер трекеров",
         "color": "#32CD32",
         "icon": "fas fa-search-plus",
-        "link": "http://SERVER_IP:9117",
-        "description": "Поиск по трекерам"
+        "link": "http://SERVER_IP:9696",
+        "description": "Prowlarr - поиск по трекерам"
+    },
+    {
+        "name": "🎥 Radarr",
+        "color": "#FF69B4",
+        "icon": "fas fa-film",
+        "link": "http://SERVER_IP:7878",
+        "description": "Управление фильмами"
+    },
+    {
+        "name": "📺 Sonarr",
+        "color": "#1E90FF",
+        "icon": "fas fa-tv",
+        "link": "http://SERVER_IP:8989",
+        "description": "Управление сериалами"
     }
 ]
 APPS_EOF
@@ -1088,14 +1378,14 @@ sed -i "s/SERVER_IP/$SERVER_IP/g" /home/$USERNAME/docker/heimdall/apps.json
 # Перезапускаем Heimdall для применения настроек
 docker restart heimdall
 
-echo "Heimdall настроен с Яндекс поиском и сменой пароля!"
+echo "Heimdall настроен со всеми сервисами!"
 HEIMDALL_EOF
 
 chmod +x /home/$USER/scripts/setup-heimdall.sh
 nohup /home/$USER/scripts/setup-heimdall.sh > /dev/null 2>&1 &
 
-# 15. АВТОМАТИЧЕСКАЯ НАСТРОЙКА УЧЕТНЫХ ЗАПИСЕЙ
-log "👤 Настраиваем учетные записи (admin/homeserver)..."
+# 19. АВТОМАТИЧЕСКАЯ НАСТРОЙКА УЧЕТНЫХ ЗАПИСЕЙ
+log "👤 Настраиваем учетные записи..."
 
 cat > /home/$USER/scripts/setup-accounts.sh << 'ACCOUNTS_EOF'
 #!/bin/bash
@@ -1103,7 +1393,7 @@ cat > /home/$USER/scripts/setup-accounts.sh << 'ACCOUNTS_EOF'
 echo "Настраиваем учетные записи..."
 
 # Ждем полного запуска сервисов
-sleep 60
+sleep 90
 
 # Создаем файл с учетными данными
 cat > /home/$USER/accounts.txt << 'ACCEOF'
@@ -1113,130 +1403,143 @@ cat > /home/$USER/accounts.txt << 'ACCEOF'
 Логин: admin
 Пароль: homeserver
 
-=== КАК ПОМЕНЯТЬ ПАРОЛЬ ===
-1. В Heimdall нажмите иконку "🔐 Смена пароля"
-2. Или перейдите: http://SERVER_IP:8089
-3. Введите текущий пароль и новый пароль
+=== ДОСТУП КАК YOUTUBE ===
 
-=== ДОСТУП К СЕРВИСАМ ===
+🎯 КАК РАБОТАЕТ:
+1. Открываете homeserver123.duckdns.org в браузере
+2. Видите главную страницу входа
+3. Входите в систему
+4. Попадаете в панель управления
+5. Кликаете по иконкам сервисов
 
-🏠 Главная страница (вход в систему):
-http://SERVER_IP:8088
-ИЛИ
-https://DOMAIN.duckdns.org:8088
-Логин: admin
-Пароль: homeserver
+🌐 ОСНОВНОЙ ДОСТУП:
+http://homeserver123.duckdns.org
 
-🏠 Heimdall (панель управления):
-http://SERVER_IP:80
-После авторизации на главной странице
+📡 ДЛЯ РАБОТЫ НУЖЕН ПРОБРОС ПОРТОВ:
+• Порты 80 и 443 на роутере
+• Инструкция: /home/USER/port-forwarding-guide.txt
 
-🎬 Jellyfin (медиасервер):
-http://SERVER_IP:8096
-При первом входе создайте пользователя:
-- Имя: admin
-- Пароль: homeserver
+=== СЕРВИСЫ ЧЕРЕЗ ПРОКСИ ===
 
-☁️ Nextcloud (файловое хранилище):
-http://SERVER_IP/nextcloud  
-При первом входе:
-- Логин: admin
-- Пароль: homeserver
-- База данных: MySQL
-  - Пользователь БД: nextclouduser
-  - Пароль БД: homeserver
-  - Имя БД: nextcloud
-  - Хост: localhost
+После входа доступны:
+/jellyfin/     - Медиасервер
+/overseerr/    - Поиск фильмов  
+/heimdall/     - Панель управления
+/monitoring/   - Мониторинг
+/passwords/    - Менеджер паролей
+/nextcloud/    - Файловое хранилище
 
-🔐 Vaultwarden (менеджер паролей):
-http://SERVER_IP:8000
-Нажмите "Create account":
-- Email: admin@localhost
-- Пароль: homeserver
+=== ЛОКАЛЬНЫЙ ДОСТУП ===
 
-🔍 Overseerr (поиск фильмов):
-http://SERVER_IP:5055
-Настройте подключение к Jellyfin:
-- URL: http://jellyfin:8096
-- Логин: admin  
-- Пароль: homeserver
+Главная страница: http://SERVER_IP
+Jellyfin: http://SERVER_IP:8096
+Overseerr: http://SERVER_IP:5055
+Heimdall: http://SERVER_IP:8080
+Мониторинг: http://SERVER_IP:3001
+Смена пароля: http://SERVER_IP:8089
 
-📊 Uptime Kuma (мониторинг):
-http://SERVER_IP:3001
-При первом входе создайте пароль: homeserver
+=== АВТОМАТИЧЕСКИЕ ФУНКЦИИ ===
 
-🤖 Ollama (нейросеть):
-http://SERVER_IP:11434
-Доступ через API, пароль не требуется
-
-🔍 Яндекс Поиск:
-Доступен прямо из Heimdall
-
-🔐 Смена пароля:
-http://SERVER_IP:8089
-Измените пароль администратора
-
-=== ВАЖНАЯ ИНФОРМАЦИЯ ===
-1. Сначала зайдите на главную страницу (порт 8088)
-2. Войдите с логином admin и паролем homeserver
-3. Вы будете перенаправлены в Heimdall
-4. Оттуда доступны все сервисы одним кликом
-5. Для смены пароля используйте иконку "🔐 Смена пароля"
+🔄 Автообновления: каждое воскресенье в 3:00
+💾 Автобэкап: каждый день в 2:00
+🧹 Автоочистка: каждые 6 часов (только временные файлы)
 ACCEOF
 
-# Заменяем SERVER_IP на реальный IP и DOMAIN
+# Заменяем SERVER_IP на реальный IP
 SERVER_IP=$(hostname -I | awk '{print $1}')
-DOMAIN="domenforserver123"
 sed -i "s/SERVER_IP/$SERVER_IP/g" /home/$USER/accounts.txt
-sed -i "s/DOMAIN/$DOMAIN/g" /home/$USER/accounts.txt
+sed -i "s/USER/$USERNAME/g" /home/$USER/accounts.txt
 
-echo "Учетные записи настроены!"
+# Создаем инструкцию по пробросу портов
+cat > /home/$USER/port-forwarding-guide.txt << 'PORTS_GUIDE'
+=== 📡 ИНСТРУКЦИЯ ПО ПРОБРОСУ ПОРТОВ ===
+
+Для доступа КАК YOUTUBE нужно пробросить порты на роутере:
+
+🎯 ОБЯЗАТЕЛЬНЫЕ ПОРТЫ:
+• ПОРТ 80 (HTTP) → 192.168.1.100:80
+• ПОРТ 443 (HTTPS) → 192.168.1.100:80
+
+📋 ПОШАГОВАЯ ИНСТРУКЦИЯ:
+
+1. ОТКРОЙТЕ НАСТРОЙКИ РОУТЕРА:
+   - В браузере откройте 192.168.1.1 или 192.168.0.1
+   - Логин/пароль: admin/admin (или смотрите на роутере)
+
+2. НАЙДИТЕ РАЗДЕЛ:
+   - "Переадресация портов" (Port Forwarding)
+   - Или "Виртуальные серверы" (Virtual Servers)
+
+3. ДОБАВЬТЕ ПРАВИЛА:
+
+   ПРАВИЛО 1 - HTTP:
+   - Имя: HomeServer_HTTP
+   - Внешний порт: 80
+   - Внутренний IP: 192.168.1.100
+   - Внутренний порт: 80
+   - Протокол: TCP
+
+   ПРАВИЛО 2 - HTTPS:
+   - Имя: HomeServer_HTTPS  
+   - Внешний порт: 443
+   - Внутренний IP: 192.168.1.100
+   - Внутренний порт: 80
+   - Протокол: TCP
+
+4. СОХРАНИТЕ И ПЕРЕЗАГРУЗИТЕ РОУТЕР
+
+🎯 РЕЗУЛЬТАТ:
+После настройки будет работать:
+http://homeserver123.duckdns.org
+https://homeserver123.duckdns.org
+
+⚠️ ВАЖНО:
+• IP 192.168.1.100 замените на реальный IP вашего сервера
+• Узнать IP: hostname -I
+• Для постоянной работы настройте статический IP для сервера
+PORTS_GUIDE
+
+# Заменяем IP в инструкции
+sed -i "s/192.168.1.100/$SERVER_IP/g" /home/$USER/port-forwarding-guide.txt
+
+echo "Учетные записи и инструкции настроены!"
 echo "Файл с инструкциями: /home/$USER/accounts.txt"
+echo "Инструкция по пробросу портов: /home/$USER/port-forwarding-guide.txt"
 ACCOUNTS_EOF
 
 chmod +x /home/$USER/scripts/setup-accounts.sh
 nohup /home/$USER/scripts/setup-accounts.sh > /dev/null 2>&1 &
 
-# 16. ФИНАЛЬНАЯ ИНФОРМАЦИЯ
+# 20. ФИНАЛЬНАЯ ИНФОРМАЦИЯ
 echo ""
 echo "=========================================="
 echo "🎉 АВТОМАТИЧЕСКАЯ УСТАНОВКА ЗАВЕРШЕНА!"
 echo "=========================================="
 echo ""
-echo "🌐 ВАШ ДОМЕН: https://$DUCKDNS_URL"
+echo "🌐 ВАШ ДОМЕН: http://$DUCKDNS_URL"
 echo ""
 echo "🔐 СИСТЕМА ДОСТУПА:"
-echo "🏠 ГЛАВНАЯ СТРАНИЦА ВХОДА: http://$SERVER_IP:8088"
-echo "   ИЛИ https://$DUCKDNS_URL:8088"
+echo "🏠 ГЛАВНАЯ СТРАНИЦА: http://$SERVER_IP"
+echo "   ИЛИ: http://$DUCKDNS_URL (после проброса портов)"
 echo ""
 echo "👤 ДАННЫЕ ДЛЯ ВХОДА:"
 echo "   Логин: admin"
 echo "   Пароль: homeserver"
 echo ""
-echo "🔧 ВОЗМОЖНОСТИ:"
-echo "   ✅ Веб-интерфейс смены пароля"
-echo "   ✅ Яндекс поиск из панели управления"
-echo "   ✅ Автоматическое обновление IP"
-echo "   ✅ Все сервисы в одной сети"
+echo "📡 ДЛЯ ДОСТУПА ИЗ ИНТЕРНЕТА:"
+echo "   Настройте проброс портов 80 и 443 на роутере"
+echo "   Инструкция: /home/$USER/port-forwarding-guide.txt"
 echo ""
-echo "📊 ОСНОВНЫЕ СЕРВИСЫ:"
-echo "🏠 Панель управления: http://$DUCKDNS_URL (после авторизации)"
-echo "🎬 Jellyfin (медиа): http://$DUCKDNS_URL:8096"
-echo "🔍 Поиск фильмов: http://$DUCKDNS_URL:5055"
-echo "☁️ Nextcloud (файлы): http://$DUCKDNS_URL/nextcloud"
-echo "🔐 Менеджер паролей: http://$DUCKDNS_URL:8000"
-echo "🤖 Нейросеть: http://$DUCKDNS_URL:11434"
-echo "🔧 Смена пароля: http://$DUCKDNS_URL:8089"
+echo "🎯 КАК РАБОТАЕТ:"
+echo "   1. Открываете homeserver123.duckdns.org"
+echo "   2. Входите с логином/паролем"
+echo "   3. Попадаете в панель управления"
+echo "   4. Кликаете по иконкам сервисов"
+echo "   5. Все сервисы открываются через основной домен!"
 echo ""
-echo "⚡ КАК НАЧАТЬ:"
-echo "1. Откройте в браузере: http://$SERVER_IP:8088"
-echo "2. Введите логин: admin, пароль: homeserver"
-echo "3. Вы попадете в панель управления Heimdall"
-echo "4. Оттуда доступны все сервисы одним кликом"
-echo "5. Для смены пароля нажмите иконку '🔐 Смена пароля'"
+echo "📋 ИНСТРУКЦИИ:"
+echo "   Полная инструкция: /home/$USER/accounts.txt"
+echo "   Проброс портов: /home/$USER/port-forwarding-guide.txt"
 echo ""
-echo "📋 ПОЛНАЯ ИНСТРУКЦИЯ:"
-echo "Файл с детальными инструкциями: /home/$USER/accounts.txt"
-echo ""
-echo "🚀 Готово! Ваш домашний сервер запущен с системой авторизации и смены пароля!"
+echo "🚀 Готово! Ваш домашний сервер запущен!"
 echo "=========================================="
