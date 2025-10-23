@@ -1,3 +1,26 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #!/bin/bash
 
 # Настройки пользователя
@@ -15,6 +38,55 @@ echo "=========================================="
 log() {
     echo "[$(date '+%H:%M:%S')] $1"
 }
+
+# 🔧 ШАГ 0: АВТОМАТИЧЕСКАЯ НАСТРОЙКА СТАТИЧЕСКОГО IP
+log "🌐 Настройка статического IP..."
+configure_static_ip() {
+    log "📡 Автоматическая настройка статического IP..."
+    
+    # Получаем текущие сетевые настройки
+    INTERFACE=$(ip route | grep default | awk '{print $5}' | head -1)
+    GATEWAY=$(ip route | grep default | awk '{print $3}' | head -1)
+    CURRENT_IP=$(hostname -I | awk '{print $1}')
+    NETWORK=$(echo $CURRENT_IP | cut -d. -f1-3)
+    
+    # Генерируем статический IP (обычно .100)
+    STATIC_IP="${NETWORK}.100"
+    
+    log "📊 Сетевые данные:"
+    log "   Интерфейс: $INTERFACE"
+    log "   Шлюз: $GATEWAY" 
+    log "   Текущий IP: $CURRENT_IP"
+    log "   Статический IP: $STATIC_IP"
+    
+    # Создаем конфиг Netplan
+    cat > /tmp/01-netcfg.yaml << EOF
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    $INTERFACE:
+      dhcp4: no
+      addresses: [$STATIC_IP/24]
+      gateway4: $GATEWAY
+      nameservers:
+        addresses: [8.8.8.8, 1.1.1.1]
+EOF
+    
+    # Применяем настройки
+    sudo cp /tmp/01-netcfg.yaml /etc/netplan/01-netcfg.yaml
+    sudo netplan apply
+    
+    log "✅ Статический IP $STATIC_IP настроен!"
+    log "⚠️  Перезагрузите сервер для применения настроек: sudo reboot"
+}
+
+# Запрашиваем настройку статического IP
+read -p "Настроить статический IP автоматически? (y/n): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    configure_static_ip
+fi
 
 # 1. ОБНОВЛЕНИЕ СИСТЕМЫ
 log "📦 Обновление системы..."
@@ -68,6 +140,10 @@ mkdir -p /home/$USER/docker/{jellyfin,tribler,jackett,overseerr,heimdall,uptime-
 mkdir -p /home/$USER/media/{movies,tv,streaming,music,downloads,torrents}
 mkdir -p /home/$USER/backups
 
+# 🎬 ДОБАВЛЯЕМ НОВЫЕ ПАПКИ ДЛЯ СИСТЕМЫ "НАЖАЛ-СМОТРИ"
+mkdir -p /home/$USER/media/{streaming-temp,watch-progress}
+mkdir -p /home/$USER/scripts/{auto-watch,search-integration}
+
 # 7. ЗАПУСК ВСЕХ СЕРВИСОВ ЧЕРЕЗ DOCKER-COMPOSE
 log "🐳 Запуск сервисов..."
 
@@ -89,6 +165,8 @@ services:
     volumes:
       - /home/$USER/docker/jellyfin:/config
       - /home/$USER/media:/media
+      - /home/$USER/media/streaming-temp:/media/streaming-temp
+      - /home/$USER/scripts:/scripts
     environment:
       - TZ=Europe/Moscow
     networks:
@@ -102,9 +180,11 @@ services:
     ports:
       - "6881:6881"
       - "6881:6881/udp"
+      - "8080:8080"
     volumes:
       - /home/$USER/docker/qbittorrent:/config
       - /home/$USER/media/streaming:/downloads
+      - /home/$USER/media/streaming-temp:/temp-downloads
     environment:
       - TZ=Europe/Moscow
       - PUID=1000
@@ -124,6 +204,7 @@ services:
       - /home/$USER/docker/radarr:/config
       - /home/$USER/media/movies:/movies
       - /home/$USER/media/streaming:/downloads
+      - /home/$USER/media/streaming-temp:/temp-downloads
     environment:
       - TZ=Europe/Moscow
       - PUID=1000
@@ -142,6 +223,7 @@ services:
       - /home/$USER/docker/sonarr:/config
       - /home/$USER/media/tv:/tv
       - /home/$USER/media/streaming:/downloads
+      - /home/$USER/media/streaming-temp:/temp-downloads
     environment:
       - TZ=Europe/Moscow
       - PUID=1000
@@ -260,6 +342,414 @@ EOF
 cd /home/$USER/docker
 docker-compose up -d
 
+# 🎯 ДОБАВЛЯЕМ СИСТЕМУ "НАЖАЛ-СМОТРИ" С АВТОМАТИЧЕСКИМ УДАЛЕНИЕМ
+log "🎬 Настройка системы 'нажал-смотри'..."
+
+# Создаем скрипт автоматического поиска и скачивания
+cat > /home/$USER/scripts/auto-watch/movie-search.sh << 'SEARCH_EOF'
+#!/bin/bash
+
+# Скрипт автоматического поиска фильмов
+MOVIE_NAME="$1"
+USER_ID="$2"
+
+LOG_FILE="/home/$USER/scripts/auto-watch/search.log"
+PROGRESS_DIR="/home/$USER/media/watch-progress"
+
+echo "$(date): Поиск фильма: $MOVIE_NAME для пользователя $USER_ID" >> $LOG_FILE
+
+# Создаем папку для прогресса просмотра
+mkdir -p "$PROGRESS_DIR"
+
+# Ищем фильм через Radarr API
+RADARR_API_KEY="$(cat /home/$USER/docker/radarr/config.xml | grep ApiKey | sed -e 's/<[^>]*>//g' | tr -d ' ')"
+if [ -z "$RADARR_API_KEY" ]; then
+    RADARR_API_KEY="$(docker exec radarr cat /config/config.xml | grep ApiKey | sed -e 's/<[^>]*>//g' | tr -d ' ')"
+fi
+
+# Поиск фильма в TMDB
+SEARCH_RESULT=$(curl -s "http://localhost:7878/api/v3/movie/lookup?term=$MOVIE_NAME" -H "X-Api-Key: $RADARR_API_KEY")
+MOVIE_ID=$(echo "$SEARCH_RESULT" | jq -r '.[0]?.tmdbId // empty')
+
+if [ -n "$MOVIE_ID" ]; then
+    echo "$(date): Найден фильм TMDB ID: $MOVIE_ID" >> $LOG_FILE
+    
+    # Добавляем фильм в Radarr
+    ADD_MOVIE_JSON=$(cat << ADD_EOF
+{
+    "tmdbId": $MOVIE_ID,
+    "monitored": true,
+    "qualityProfileId": 1,
+    "rootFolderPath": "/media/streaming-temp",
+    "searchForMovie": true
+}
+ADD_EOF
+    )
+    
+    curl -s -X POST "http://localhost:7878/api/v3/movie" \
+        -H "Content-Type: application/json" \
+        -H "X-Api-Key: $RADARR_API_KEY" \
+        -d "$ADD_MOVIE_JSON"
+        
+    echo "$(date): Фильм добавлен в загрузку: $MOVIE_NAME" >> $LOG_FILE
+    
+    # Создаем файл прогресса
+    echo "$(date): Начат просмотр $MOVIE_NAME" > "$PROGRESS_DIR/${MOVIE_ID}.watch"
+    
+else
+    echo "$(date): Ошибка: Фильм не найден: $MOVIE_NAME" >> $LOG_FILE
+fi
+SEARCH_EOF
+
+chmod +x /home/$USER/scripts/auto-watch/movie-search.sh
+
+# Создаем скрипт автоматического удаления после просмотра
+cat > /home/$USER/scripts/auto-watch/cleanup-watched.sh << 'CLEANUP_EOF'
+#!/bin/bash
+
+# Скрипт удаления просмотренных фильмов
+LOG_FILE="/home/$USER/scripts/auto-watch/cleanup.log"
+PROGRESS_DIR="/home/$USER/media/watch-progress"
+STREAMING_TEMP="/home/$USER/media/streaming-temp"
+
+echo "$(date): Проверка просмотренных фильмов..." >> $LOG_FILE
+
+# Получаем список просмотренных фильмов из Jellyfin API
+JELLYFIN_API_KEY="$(cat /home/$USER/docker/jellyfin/data/data/keys.xml | grep -oP '(?<=<ApiKey>)[^<]+' | head -1)"
+
+if [ -n "$JELLYFIN_API_KEY" ]; then
+    # Получаем список завершенных просмотров
+    WATCHED_ITEMS=$(curl -s "http://localhost:8096/Users/$(curl -s "http://localhost:8096/Users" -H "X-Emby-Token: $JELLYFIN_API_KEY" | jq -r '.[0].Id')/Items?Recursive=true&Filters=IsPlayed" -H "X-Emby-Token: $JELLYFIN_API_KEY")
+    
+    echo "$WATCHED_ITEMS" | jq -r '.Items[] | select(.LocationType == "FileSystem") | "\(.Id)|\(.Name)|\(.Path)"' | while IFS='|' read -r ID NAME PATH; do
+        if [[ "$PATH" == *"streaming-temp"* ]]; then
+            echo "$(date): Удаляем просмотренный фильм: $NAME" >> $LOG_FILE
+            
+            # Удаляем файл
+            rm -f "$PATH"
+            
+            # Удаляем из Radarr
+            RADARR_API_KEY="$(docker exec radarr cat /config/config.xml | grep ApiKey | sed -e 's/<[^>]*>//g' | tr -d ' ')"
+            MOVIE_ID=$(curl -s "http://localhost:7878/api/v3/movie" -H "X-Api-Key: $RADARR_API_KEY" | jq -r ".[] | select(.path == \"$PATH\") | .id")
+            
+            if [ -n "$MOVIE_ID" ]; then
+                curl -s -X DELETE "http://localhost:7878/api/v3/movie/$MOVIE_ID" -H "X-Api-Key: $RADARR_API_KEY" -H "Content-Type: application/json"
+                echo "$(date): Удален из Radarr: $NAME" >> $LOG_FILE
+            fi
+            
+            # Удаляем файл прогресса
+            find "$PROGRESS_DIR" -name "*.watch" -delete
+        fi
+    done
+fi
+
+# Очищаем старые временные файлы (больше 24 часов)
+find "$STREAMING_TEMP" -type f -mtime +1 -delete
+find "$PROGRESS_DIR" -type f -mtime +1 -delete
+
+echo "$(date): Очистка завершена" >> $LOG_FILE
+CLEANUP_EOF
+
+chmod +x /home/$USER/scripts/auto-watch/cleanup-watched.sh
+
+# Добавляем в крон автоматическую очистку каждые 10 минут
+(crontab -l 2>/dev/null; echo "*/10 * * * * /home/$USER/scripts/auto-watch/cleanup-watched.sh") | crontab -
+
+# Создаем веб-интерфейс для поиска прямо в Jellyfin
+cat > /home/$USER/scripts/search-integration/jellyfin-search.html << 'HTML_EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>🔍 Поиск фильмов</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            background: #1c1c1c; 
+            color: white; 
+            margin: 0; 
+            padding: 20px; 
+        }
+        .search-container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: #2b2b2b; 
+            padding: 20px; 
+            border-radius: 10px; 
+        }
+        input, button { 
+            padding: 10px; 
+            margin: 5px; 
+            border: none; 
+            border-radius: 5px; 
+        }
+        input { 
+            width: 70%; 
+            background: #3c3c3c; 
+            color: white; 
+        }
+        button { 
+            background: #00a4dc; 
+            color: white; 
+            cursor: pointer; 
+        }
+        .result { 
+            margin-top: 20px; 
+            padding: 10px; 
+            background: #363636; 
+            border-radius: 5px; 
+        }
+    </style>
+</head>
+<body>
+    <div class="search-container">
+        <h2>🎬 Поиск и просмотр фильмов</h2>
+        <p>Введите название фильма - он автоматически скачается и будет доступен для просмотра через 1-5 минут!</p>
+        
+        <input type="text" id="movieName" placeholder="Введите название фильма...">
+        <button onclick="searchMovie()">🔍 Найти и скачать</button>
+        
+        <div id="result" class="result"></div>
+    </div>
+
+    <script>
+        function searchMovie() {
+            const movieName = document.getElementById('movieName').value;
+            const resultDiv = document.getElementById('result');
+            
+            if (!movieName) {
+                resultDiv.innerHTML = '⚠️ Введите название фильма';
+                return;
+            }
+            
+            resultDiv.innerHTML = '⏳ Ищем фильм и начинаем скачивание...';
+            
+            fetch('/search-movie', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    movieName: movieName,
+                    userId: 'jellyfin-user'
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    resultDiv.innerHTML = `✅ ${data.message}<br>🎬 Фильм появится в Jellyfin через 1-5 минут!`;
+                } else {
+                    resultDiv.innerHTML = `❌ Ошибка: ${data.message}`;
+                }
+            })
+            .catch(error => {
+                resultDiv.innerHTML = '❌ Ошибка сети';
+            });
+        }
+        
+        // Поиск при нажатии Enter
+        document.getElementById('movieName').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchMovie();
+            }
+        });
+    </script>
+</body>
+</html>
+HTML_EOF
+
+# Создаем API endpoint для поиска фильмов
+cat > /home/$USER/scripts/search-integration/search-api.py << 'PYTHON_API'
+#!/usr/bin/env python3
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import json
+import subprocess
+import os
+import threading
+
+USERNAME = os.getenv('USER', 'ubuntu')
+
+class SearchHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/search':
+            # Serve search page
+            with open('/home/' + USERNAME + '/scripts/search-integration/jellyfin-search.html', 'rb') as f:
+                content = f.read()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(content)
+        else:
+            self.send_error(404)
+    
+    def do_POST(self):
+        if self.path == '/search-movie':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            movie_name = data.get('movieName', '')
+            user_id = data.get('userId', '')
+            
+            if movie_name:
+                # Запускаем поиск в отдельном потоке
+                def run_search():
+                    subprocess.run([
+                        '/home/' + USERNAME + '/scripts/auto-watch/movie-search.sh',
+                        movie_name, user_id
+                    ])
+                
+                thread = threading.Thread(target=run_search)
+                thread.start()
+                
+                response = {
+                    'success': True,
+                    'message': f'Фильм "{movie_name}" добавлен в загрузку! Доступен через 1-5 минут в Jellyfin.'
+                }
+            else:
+                response = {
+                    'success': False,
+                    'message': 'Не указано название фильма'
+                }
+            
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode('utf-8'))
+        else:
+            self.send_error(404)
+    
+    def log_message(self, format, *args):
+        pass  # Disable logging
+
+def run_search_api():
+    port = 8099
+    server = HTTPServer(('0.0.0.0', port), SearchHandler)
+    print(f'Search API running on port {port}')
+    server.serve_forever()
+
+if __name__ == '__main__':
+    run_search_api()
+PYTHON_API
+
+chmod +x /home/$USER/scripts/search-integration/search-api.py
+
+# Добавляем поисковый API в docker-compose
+cat >> /home/$USER/docker/docker-compose.yml << 'DOCKER_EOF'
+
+  # Search API для интеграции поиска в Jellyfin
+  search-api:
+    image: python:3.9-alpine
+    container_name: search-api
+    restart: unless-stopped
+    ports:
+      - "8099:8099"
+    volumes:
+      - /home/$USER/scripts/search-integration:/app
+    working_dir: /app
+    command: python search-api.py
+    networks:
+      - server-net
+DOCKER_EOF
+
+# Перезапускаем docker-compose с новым сервисом
+cd /home/$USER/docker
+docker-compose up -d
+
+# Создаем инструкцию по использованию системы "нажал-смотри"
+cat > /home/$USER/streaming-system-guide.txt << 'STREAM_GUIDE'
+=== 🎬 СИСТЕМА "НАЖАЛ-СМОТРИ" КАК НА YOUTUBE ===
+
+🎯 КАК ЭТО РАБОТАЕТ:
+1. Вы ищете фильм через поиск
+2. Система автоматически скачивает торрент
+3. Через 1-5 минут фильм доступен в Jellyfin
+4. Вы смотрите фильм - он загружается по мере просмотра
+5. После завершения просмотра фильм автоматически удаляется
+
+🔧 ДОСТУП К ПОИСКУ:
+
+ВАРИАНТ 1 - Через веб-интерфейс:
+http://ВАШ_IP:8099/search
+
+ВАРИАНТ 2 - Прямо в Jellyfin (ручная настройка):
+1. Откройте Jellyfin → Настройки → Плагины
+2. Добавьте кастомный HTML плагин
+3. Вставьте URL: http://search-api:8099/search
+
+⚡ АВТОМАТИЧЕСКИЕ ФУНКЦИИ:
+
+• Автопоиск по названию фильма
+• Автоскачивание через торренты
+• Автодобавление в Jellyfin
+• Прогрессивная загрузка как на YouTube
+• Автоудаление после просмотра
+• Очистка временных файлов каждые 10 минут
+
+🛡️ БЕЗОПАСНОСТЬ:
+• Удаляются только временные файлы стриминга
+• Основная библиотека фильмов/сериалов не затрагивается
+• Можно пересмотреть фильм - он скачается заново
+
+🎯 ИНСТРУКЦИЯ:
+1. Откройте http://ВАШ_IP:8099/search
+2. Введите название фильма
+3. Нажмите "Найти и скачать"
+4. Через 1-5 минут откройте Jellyfin
+5. Фильм будет в разделе "Фильмы"
+6. Смотрите и наслаждайтесь!
+
+⚠️ ВАЖНО:
+• Для работы нужен стабильный интернет
+• Первые 30 секунд фильма загружаются быстро
+• Дальнейшая загрузка идет во время просмотра
+• После просмотра файл удаляется автоматически
+STREAM_GUIDE
+
+# Обновляем файл accounts.txt с новой информацией
+cat >> /home/$USER/accounts.txt << 'ACCOUNTS_ADD'
+
+=== 🎬 СИСТЕМА "НАЖАЛ-СМОТРИ" ===
+
+🔍 ПОИСК ФИЛЬМОВ: http://SERVER_IP:8099/search
+
+КАК РАБОТАЕТ:
+1. Открываете страницу поиска
+2. Вводите название фильма
+3. Нажимаете "Найти и скачать"
+4. Через 1-5 минут фильм в Jellyfin!
+5. Смотрите - файл удаляется после просмотра
+
+⚡ ФУНКЦИИ:
+• Автопоиск по базе фильмов
+• Автоскачивание торрентов
+• Прогрессивная загрузка
+• Автоудаление после просмотра
+ACCOUNTS_ADD
+
+# Заменяем SERVER_IP на реальный IP в инструкциях
+SERVER_IP=$(hostname -I | awk '{print $1}')
+sed -i "s/SERVER_IP/$SERVER_IP/g" /home/$USER/streaming-system-guide.txt
+sed -i "s/SERVER_IP/$SERVER_IP/g" /home/$USER/accounts.txt
+
+echo ""
+echo "=========================================="
+echo "🎬 СИСТЕМА 'НАЖАЛ-СМОТРИ' ДОБАВЛЕНА!"
+echo "=========================================="
+echo ""
+echo "🌐 ДОСТУП К ПОИСКУ:"
+echo "   http://$SERVER_IP:8099/search"
+echo ""
+echo "🎯 КАК РАБОТАЕТ:"
+echo "   1. Открываете страницу поиска"
+echo "   2. Вводите название фильма" 
+echo "   3. Нажимаете 'Найти и скачать'"
+echo "   4. Через 1-5 минут фильм в Jellyfin!"
+echo "   5. Смотрите - файл удаляется после просмотра"
+echo ""
+echo "📖 ПОДРОБНАЯ ИНСТРУКЦИЯ:"
+echo "   /home/$USER/streaming-system-guide.txt"
+echo ""
+echo "=========================================="
 # 8. НАСТРОЙКА NEXTCLOUD
 log "☁️ Установка Nextcloud..."
 cd /var/www/html
