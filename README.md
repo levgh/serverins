@@ -255,3 +255,324 @@ http://ip_твоего_сервера:8088
 Настрой качество видео
 В Sonarr (http://ip_сервера:8989):
 Аналогично Radarr для сериалов
+
+
+
+
+🎯 WHAT WE HAVE - SYSTEM OVERVIEW
+
+🎬 MEDIA CENTER (MAIN FUNCTION)
+🎬 JELLYFIN + AUTO-SEARCH = YOUR PERSONAL NETFLIX
+Find movies → enter title → start watching in 30 seconds
+
+Automatic download of covers, descriptions, subtitles
+
+YouTube-like buffering - no waiting for full downloads
+
+Auto-cleanup - watched movies are deleted automatically
+
+How to use:
+
+Open Jellyfin (TV/phone/computer)
+
+Click the "🔍 Search Movies" button
+
+Type "Interstellar" → click "Watch"
+
+The movie starts playing in 30 seconds!
+
+🔒 PERSONAL VPN FOR BYPASSING BLOCKS
+🌐 YOUR OWN VPN SERVER
+
+For Hiddify - bypass blocks on YouTube, ChatGPT, Netflix
+
+Random ports - change every 24 hours for anonymity
+
+Your IP - all traffic goes through your home server
+
+What you can do:
+
+Watch international Netflix from Russia
+
+Use ChatGPT, Grok without restrictions
+
+Watch blocked YouTube content
+
+Anonymous internet browsing
+
+☁️ FILE STORAGE
+📁 NEXTCLOUD = YOUR PERSONAL CLOUD
+
+File synchronization between devices
+
+Shared folders for family/friends
+
+Photo and document backups
+
+Access your files from anywhere online
+
+🤖 LOCAL ARTIFICIAL INTELLIGENCE
+🧠 OLLAMA = YOUR HOME ChatGPT
+
+Complete privacy - all requests processed locally
+
+Works without internet
+
+Free - no subscriptions
+
+Understands Russian
+
+🔐 PASSWORD MANAGER
+🗝️ VAULTWARDEN = YOUR 1PASSWORD
+
+Secure password storage
+
+Auto-fill in browsers
+
+Sync between devices
+
+Self-hosted - your data stays with you
+
+🚀 REAL USE CASE SCENARIOS
+🏠 FOR FAMILY:
+Movie night:
+
+Husband searches "Avengers" in Jellyfin → watches in 30 seconds
+
+Kids watch cartoons on phone/tablet
+
+Wife uploads photos to Nextcloud from phone
+
+Everyone protected by VPN while browsing
+
+💼 FOR WORK:
+Remote work:
+
+Access work files through Nextcloud
+
+Consult AI assistant without limits
+
+Secure VPN for corporate resources
+
+Store passwords for work services
+
+🎮 FOR ENTERTAINMENT:
+Media center:
+
+Torrents download directly to system
+
+Movies appear in Jellyfin automatically
+
+Russian subtitles load automatically
+
+Watch from any device at home
+
+🌐 FOR TRAVEL:
+Access from anywhere:
+
+Connect to home VPN
+
+Watch your movies like at home
+
+Access files as if you were home
+
+All your services available securely
+
+🔧 TECHNICAL CAPABILITIES
+📊 MONITORING:
+
+Uptime Kuma - monitors all services
+
+Notifications if something goes down
+
+Usage statistics
+
+🔄 AUTOMATION:
+
+Radarr/Sonarr - automatic content search
+
+Bazarr - automatic subtitles
+
+qBittorrent - smart torrent downloading
+
+🔐 SECURITY:
+
+Single sign-on - one password for entire system
+
+Fail2ban - protection against hacking
+
+Auto-updates - system always current
+
+Backups - settings won't be lost
+
+💡 WHY THIS IS BETTER THAN COMMERCIAL SOLUTIONS?
+
+Feature	Commercial Alternative	Our Solution
+🎬 Video	Netflix ($15/month)	FREE
+☁️ Files	Google Drive ($2/month)	FREE
+🧠 AI	ChatGPT Plus ($20/month)	FREE
+🔐 Passwords	1Password ($5/month)	FREE
+🌐 VPN	ExpressVPN ($13/month)	FREE
+TOTAL	~$55/month	FREE
+🎯 EASY WAY TO START:
+Open browser → enter http://[IP-address]:8088
+
+Login (username: admin, password: homeserver)
+
+Click Jellyfin in control panel
+
+Enjoy searching and watching movies!
+
+🔄 WHAT TO DO NEXT:
+
+Set up VPN on phone (file in /home/$USER/vpn/hiddify-client.conf)
+
+Install Nextcloud on phone for photo sync
+
+Add bookmarks to password manager
+
+Experiment with AI assistant
+
+Essentially - you now have your personal Google/Apple/Microsoft, but completely under your control, free and without limitations! 🚀
+
+What needs to be replaced:
+
+bash
+# Change main settings (find at beginning of script):
+DOMAIN="your-domain"                    # Your DuckDNS domain
+TOKEN="your-token"                      # Your DuckDNS token
+USERNAME=$(whoami)                      # Username
+SERVER_IP=$(hostname -I | awk '{print $1}') # Server IP
+How to run? It's simple!
+
+bash
+ssh username@server_ip "cd /tmp && git clone https://github.com/levgh/serverins.git && cd serverins/main && chmod +x install-server.sh && sudo ./install-server.sh"
+📥 ALTERNATIVE METHODS
+
+bash
+curl -sSL https://raw.githubusercontent.com/levgh/serverins/main/install-server.sh | sudo bash
+Installation time: 20-∞ minutes (Depends on your server internet connection)
+
+📱 DEFAULT LOGIN CREDENTIALS (Change these!)
+
+Username: admin
+
+Password: homeserver
+
+✅ WHAT'S ALREADY SET UP AUTOMATICALLY:
+Unified login system:
+
+Main page (port 8088):
+
+Username: admin
+
+Password: homeserver
+
+Automatically created services:
+
+🐳 All Docker containers running
+
+🌐 DuckDNS domain configured
+
+🔧 Basic settings applied
+
+🔧 WHAT NEEDS MANUAL CONFIGURATION:
+
+🎬 JELLYFIN (First setup)
+Access: http://server_ip:8096
+Setup steps:
+
+Select language → Russian
+
+Create user:
+
+Username: admin (or your own)
+
+Password: homeserver (or change it)
+
+Libraries - already configured automatically
+
+Setup complete - click "Done"
+
+☁️ NEXTCLOUD (Database setup)
+Access: http://server_ip/nextcloud
+Fill out form:
+
+Username: admin
+
+Password: homeserver (recommend changing)
+
+Data folder: /var/www/html/nextcloud/data
+Database settings:
+
+MySQL/MariaDB
+
+Database user: nextclouduser
+
+Database password: homeserver
+
+Database name: nextcloud
+
+Host: localhost
+
+🔐 VAULTWARDEN (Password Manager)
+Access: http://server_ip:8000
+Click "Create account":
+
+Email: admin@localhost (or your email)
+
+Password: homeserver (MUST CHANGE!)
+
+📊 UPTIME KUMA (Monitoring)
+Access: http://server_ip:3001
+First setup:
+
+Create admin password
+
+Configure notifications (optional)
+
+🔍 OVERSEERR (Movie Search)
+Access: http://server_ip:5055
+Configure Jellyfin connection:
+
+URL: http://jellyfin:8096
+
+Username: admin
+
+Password: homeserver
+
+🎯 STEP-BY-STEP POST-INSTALLATION GUIDE:
+
+STEP 1: Main Login
+
+bash
+# Open in browser:
+http://your_server_ip:8088
+# Login with:
+Username: admin
+Password: homeserver
+STEP 2: Configure services in order:
+
+Jellyfin → Create user
+
+Nextcloud → Setup database
+
+Vaultwarden → Create account
+
+Overseerr → Connect Jellyfin
+
+Uptime Kuma → Setup password
+
+STEP 3: Setup automatic downloads
+
+In Radarr (http://server_ip:7878):
+
+Configure indexers (Jackett)
+
+Configure download paths
+
+Configure video quality
+
+In Sonarr (http://server_ip:8989):
+
+Same as Radarr but for TV shows
