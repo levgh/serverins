@@ -149,25 +149,15 @@ chmod +x "/home/$CURRENT_USER/scripts/change-vpn-port.sh"
 # Добавляем смену портов в cron (каждые 24 часа)
 (crontab -l 2>/dev/null; echo "0 0 * * * /home/$CURRENT_USER/scripts/change-vpn-port.sh") | crontab -
 
-# 8. СИСТЕМА СМЕНЫ ПАРОЛЯ ДЛЯ ЕДИНОЙ АВТОРИЗАЦИИ
-log "🔑 Настройка системы смены пароля единой авторизации..."
+# 8. СИСТЕМА СМЕНЫ ПАРОЛЯ
+log "🔑 Настройка системы смены пароля..."
 
-# Создаем файл с данными авторизации
-mkdir -p "/home/$CURRENT_USER/docker/homepage"
-cat > "/home/$CURRENT_USER/docker/homepage/auth-data.json" << 'EOF'
-{
-    "username": "admin",
-    "password": "homeserver"
-}
-EOF
-
-cat > "/home/$CURRENT_USER/scripts/change-auth-password.sh" << 'EOF'
+cat > "/home/$CURRENT_USER/scripts/change-password.sh" << 'EOF'
 #!/bin/bash
 CURRENT_USERNAME=$(whoami)
 USER_HOME=$(getent passwd "$CURRENT_USERNAME" | cut -d: -f6)
-AUTH_FILE="$USER_HOME/docker/homepage/auth-data.json"
 
-echo "=== СИСТЕМА СМЕНЫ ПАРОЛЯ ЕДИНОЙ АВТОРИЗАЦИИ ==="
+echo "=== СИСТЕМА СМЕНЫ ПАРОЛЯ ==="
 read -r -s -p "Введите текущий пароль: " CURRENT_PASS
 echo
 read -r -s -p "Введите новый пароль: " NEW_PASS
@@ -180,33 +170,40 @@ if [ "$NEW_PASS" != "$NEW_PASS_CONFIRM" ]; then
     exit 1
 fi
 
-# Проверка текущего пароля из файла авторизации
-CURRENT_AUTH_PASS=$(jq -r '.password' "$AUTH_FILE" 2>/dev/null)
-if [ "$CURRENT_PASS" != "$CURRENT_AUTH_PASS" ] && [ "$CURRENT_PASS" != "homeserver" ]; then
+# Проверка текущего пароля
+echo "$CURRENT_PASS" | sudo -S echo "Проверка пароля..." > /dev/null 2>&1
+if [ $? -ne 0 ]; then
     echo "❌ Неверный текущий пароль!"
     exit 1
 fi
 
-# Обновление пароля в файле авторизации
-jq --arg newpass "$NEW_PASS" '.password = $newpass' "$AUTH_FILE" > "$AUTH_FILE.tmp" && mv "$AUTH_FILE.tmp" "$AUTH_FILE"
+# Смена пароля системы
+echo "$CURRENT_USERNAME:$NEW_PASS" | sudo chpasswd
 
-# Обновление пароля в главной странице
-sed -i "s/homeserver/$NEW_PASS/g" "$USER_HOME/docker/homepage/index.html" 2>/dev/null
+# Обновление паролей в сервисах
+sudo sed -i "s/homeserver/$NEW_PASS/g" "$USER_HOME/docker/docker-compose.yml" > /dev/null 2>&1
+sudo sed -i "s/homeserver/$NEW_PASS/g" "$USER_HOME/docker/heimdall/login.html" > /dev/null 2>&1
 
-echo "✅ Пароль единой системы авторизации успешно изменен!"
-echo "🔐 Новый пароль для входа на главную страницу: $NEW_PASS"
+# Перезапуск сервисов
+cd "$USER_HOME/docker" || exit
+docker-compose restart
+
+echo "✅ Пароль успешно изменен во всех сервисах!"
+echo "🔄 Сервисы перезапущены с новым паролем."
 EOF
 
-chmod +x "/home/$CURRENT_USER/scripts/change-auth-password.sh"
+chmod +x "/home/$CURRENT_USER/scripts/change-password.sh"
 
-# Создание веб-интерфейса для смены пароля авторизации
+# Создание веб-интерфейса для смены пароля
+mkdir -p "/home/$CURRENT_USER/docker/password-change"
+
 cat > "/home/$CURRENT_USER/docker/password-change/index.html" << 'HTML_EOF'
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Смена пароля авторизации</title>
+    <title>Смена пароля</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -255,22 +252,11 @@ cat > "/home/$CURRENT_USER/docker/password-change/index.html" << 'HTML_EOF'
         }
         .success { background: #d4edda; color: #155724; }
         .error { background: #f8d7da; color: #721c24; }
-        .back-link {
-            text-align: center;
-            margin-top: 15px;
-        }
-        .back-link a {
-            color: #667eea;
-            text-decoration: none;
-        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h2>🔐 Смена пароля авторизации</h2>
-        <p style="text-align: center; color: #666; margin-bottom: 20px; font-size: 14px;">
-            Изменяет пароль только для входа на главную страницу
-        </p>
+        <h2>🔐 Смена пароля системы</h2>
         <form id="passwordForm">
             <div class="form-group">
                 <label>Текущий пароль:</label>
@@ -284,11 +270,8 @@ cat > "/home/$CURRENT_USER/docker/password-change/index.html" << 'HTML_EOF'
                 <label>Подтвердите новый пароль:</label>
                 <input type="password" id="confirmPassword" required>
             </div>
-            <button type="submit">Сменить пароль авторизации</button>
+            <button type="submit">Сменить пароль</button>
         </form>
-        <div class="back-link">
-            <a href="/">← Назад к входу</a>
-        </div>
         <div id="message" class="message"></div>
     </div>
 
@@ -308,7 +291,7 @@ cat > "/home/$CURRENT_USER/docker/password-change/index.html" << 'HTML_EOF'
                 return;
             }
             
-            fetch('/change-auth-password', {
+            fetch('/change-password', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -324,9 +307,6 @@ cat > "/home/$CURRENT_USER/docker/password-change/index.html" << 'HTML_EOF'
                 
                 if (data.success) {
                     document.getElementById('passwordForm').reset();
-                    setTimeout(() => {
-                        window.location.href = '/';
-                    }, 2000);
                 }
             })
             .catch(error => {
@@ -562,7 +542,7 @@ sudo systemctl start jellyfin-autodownload
 
 # 10. СОЗДАНИЕ ПАПОК ДЛЯ СЕРВИСОВ
 log "📁 Создание структуры папок..."
-mkdir -p "/home/$CURRENT_USER/docker/{jellyfin,tribler,jackett,overseerr,heimdall,uptime-kuma,vaultwarden,homepage}"
+mkdir -p "/home/$CURRENT_USER/docker/{jellyfin,tribler,jackett,overseerr,heimdall,uptime-kuma,vaultwarden}"
 mkdir -p "/home/$CURRENT_USER/media/{movies,tv,streaming,music}"
 mkdir -p "/home/$CURRENT_USER/backups"
 
@@ -577,7 +557,23 @@ networks:
     driver: bridge
 
 services:
-  # Jellyfin - медиасервер с улучшенной конфигурацией
+  # Heimdall - главная страница с авторизацией
+  heimdall:
+    image: lscr.io/linuxserver/heimdall:latest
+    container_name: heimdall
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - /home/$CURRENT_USER/docker/heimdall:/config
+    environment:
+      - TZ=Europe/Moscow
+      - PUID=1000
+      - PGID=1000
+    networks:
+      - server-net
+
+  # Jellyfin - медиасервер
   jellyfin:
     image: jellyfin/jellyfin:latest
     container_name: jellyfin
@@ -590,12 +586,8 @@ services:
       - /home/$CURRENT_USER/media/streaming:/media/streaming
     environment:
       - TZ=Europe/Moscow
-      - JELLYFIN_PUBLISHED_SERVER_URL=http://$SERVER_IP:8096
     networks:
       - server-net
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.jellyfin.rule=Host(\`$DUCKDNS_URL\`) && PathPrefix(\`/jellyfin\`)"
 
   # Tribler - торрент-клиент с стримингом
   tribler:
@@ -645,22 +637,6 @@ services:
     networks:
       - server-net
 
-  # Heimdall - панель управления с поиском
-  heimdall:
-    image: lscr.io/linuxserver/heimdall:latest
-    container_name: heimdall
-    restart: unless-stopped
-    ports:
-      - "80:80"
-    volumes:
-      - /home/$CURRENT_USER/docker/heimdall:/config
-    environment:
-      - TZ=Europe/Moscow
-      - PUID=1000
-      - PGID=1000
-    networks:
-      - server-net
-
   # Uptime Kuma - мониторинг
   uptime-kuma:
     image: louislam/uptime-kuma:1
@@ -690,44 +666,7 @@ services:
       - SIGNUPS_ALLOWED=true
     networks:
       - server-net
-
-  # Главная страница с авторизацией и сменой пароля
-  homepage:
-    image: nginx:alpine
-    container_name: homepage
-    restart: unless-stopped
-    ports:
-      - "8088:80"
-    volumes:
-      - /home/$CURRENT_USER/docker/homepage:/usr/share/nginx/html
-      - /home/$CURRENT_USER/docker/password-change:/usr/share/nginx/html/password-change
-    networks:
-      - server-net
-
-  # Traefik для красивого доступа по домену
-  traefik:
-    image: traefik:v2.9
-    container_name: traefik
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /home/$CURRENT_USER/docker/traefik:/etc/traefik
-    command:
-      - --api.dashboard=true
-      - --providers.docker=true
-      - --providers.docker.exposedbydefault=false
-      - --entrypoints.web.address=:80
-    networks:
-      - server-net
 COMPOSE_EOF
-
-# Заменяем переменные в docker-compose.yml
-sed -i "s/\\$CURRENT_USER/$CURRENT_USER/g" "/home/$CURRENT_USER/docker/docker-compose.yml"
-sed -i "s/\\$SERVER_IP/$SERVER_IP/g" "/home/$CURRENT_USER/docker/docker-compose.yml"
-sed -i "s/\\$DUCKDNS_URL/$DUCKDNS_URL/g" "/home/$CURRENT_USER/docker/docker-compose.yml"
 
 # Запускаем все сервисы
 cd "/home/$CURRENT_USER/docker" || exit
@@ -1206,50 +1145,6 @@ sudo -u www-data php /var/www/html/nextcloud/occ config:system:set preview_max_x
 sudo -u www-data php /var/www/html/nextcloud/occ config:system:set preview_max_y --value=2048 --type=integer
 sudo -u www-data php /var/www/html/nextcloud/occ config:system:set jpeg_quality --value=85 --type=integer
 
-# Создание приложения для сжатия в Nextcloud
-sudo mkdir -p /var/www/html/nextcloud/custom_apps/mediacompress
-sudo tee /var/www/html/nextcloud/custom_apps/mediacompress/appinfo/info.xml > /dev/null << 'XML_EOF'
-<?xml version="1.0"?>
-<info>
-    <id>mediacompress</id>
-    <name>Media Compress</name>
-    <summary>Автоматическое сжатие фото и видео</summary>
-    <description>Автоматически сжимает загружаемые фото и видео для экономии места</description>
-    <version>1.0.0</version>
-    <licence>AGPL</licence>
-    <author>Home Server</author>
-    <namespace>MediaCompress</namespace>
-    <category>tools</category>
-    <website>https://github.com</website>
-    <bugs>https://github.com</bugs>
-    <repository>https://github.com</repository>
-    <screenshot>https://github.com</screenshot>
-    <dependencies>
-        <nextcloud min-version="25" max-version="26"/>
-    </dependencies>
-</info>
-XML_EOF
-
-sudo tee /var/www/html/nextcloud/custom_apps/mediacompress/appinfo/application.php > /dev/null << 'PHP_EOF'
-<?php
-namespace OCA\MediaCompress\AppInfo;
-
-use OCP\AppFramework\App;
-use OCP\AppFramework\Bootstrap\IBootstrap;
-use OCP\AppFramework\Bootstrap\IRegistrationContext;
-
-class Application extends App implements IBootstrap {
-    public const APP_ID = 'mediacompress';
-
-    public function __construct() {
-        parent::__construct(self::APP_ID);
-    }
-
-    public function register(IRegistrationContext $context): void {
-    }
-}
-PHP_EOF
-
 # 15. УСТАНОВКА OLLAMA
 log "🤖 Установка нейросети Ollama..."
 curl -fsSL https://ollama.ai/install.sh | sh
@@ -1275,9 +1170,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable ollama
 sudo systemctl start ollama
 
-# Скачиваем модель в фоне (ИСПРАВЛЕННАЯ СТРОКА)
-log "📥 Скачиваем модель нейросети phi:2.7b..."
-nohup bash -c 'sleep 30 && ollama pull phi:2.7b' > /dev/null 2>&1 &
+# Скачиваем модель в фоне
+log "📥 Скачиваем модель нейросети..."
+nohup bash -c 'sleep 30 && ollama pull llama2:7b' > /dev/null 2>&1 &
 
 # 16. НАСТРОЙКА БЕЗОПАСНОСТИ
 log "🛡️ Настройка безопасности..."
@@ -1291,7 +1186,6 @@ sudo ufw allow 3001/tcp
 sudo ufw allow 8000/tcp
 sudo ufw allow 11434/tcp
 sudo ufw allow 22/tcp
-sudo ufw allow 8088/tcp
 sudo ufw allow $VPN_PORT/udp
 
 # Fail2ban
@@ -1312,10 +1206,13 @@ EOF
 chmod +x "/home/$CURRENT_USER/scripts/cleanup_streaming.sh"
 (crontab -l 2>/dev/null; echo "0 3 * * * /home/$CURRENT_USER/scripts/cleanup_streaming.sh") | crontab -
 
-# 18. ГЛАВНАЯ СТРАНИЦА С АВТОРИЗАЦИЕЙ И НЕЙРОСЕТЬЮ
-log "🏠 Создаем главную страницу с авторизацией и нейросетью..."
+# 18. ГЛАВНАЯ СТРАНИЦА С АВТОРИЗАЦИЕЙ (HEIMDALL)
+log "🏠 Настраиваем Heimdall как главную страницу с авторизацией..."
 
-cat > "/home/$CURRENT_USER/docker/homepage/index.html" << 'HTMLEOF'
+# Создаем кастомную страницу входа для Heimdall
+mkdir -p "/home/$CURRENT_USER/docker/heimdall"
+
+cat > "/home/$CURRENT_USER/docker/heimdall/login.html" << 'HTML_EOF'
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -1338,7 +1235,7 @@ cat > "/home/$CURRENT_USER/docker/homepage/index.html" << 'HTMLEOF'
             border-radius: 15px;
             box-shadow: 0 15px 35px rgba(0,0,0,0.1);
             width: 100%;
-            max-width: 450px;
+            max-width: 400px;
         }
         .logo {
             text-align: center;
@@ -1352,15 +1249,6 @@ cat > "/home/$CURRENT_USER/docker/homepage/index.html" << 'HTMLEOF'
         .logo p {
             color: #666;
             font-size: 14px;
-        }
-        .ai-badge {
-            background: linear-gradient(135deg, #8A2BE2, #4B0082);
-            color: white;
-            padding: 8px 15px;
-            border-radius: 20px;
-            font-size: 12px;
-            margin-top: 10px;
-            display: inline-block;
         }
         .form-group {
             margin-bottom: 20px;
@@ -1412,24 +1300,6 @@ cat > "/home/$CURRENT_USER/docker/homepage/index.html" << 'HTMLEOF'
             color: #666;
             font-size: 12px;
         }
-        .password-change-link {
-            text-align: center;
-            margin-top: 15px;
-        }
-        .password-change-link a {
-            color: #667eea;
-            text-decoration: none;
-            margin: 0 10px;
-        }
-        .ai-link {
-            text-align: center;
-            margin-top: 10px;
-        }
-        .ai-link a {
-            color: #8A2BE2;
-            text-decoration: none;
-            font-weight: bold;
-        }
     </style>
 </head>
 <body>
@@ -1437,7 +1307,6 @@ cat > "/home/$CURRENT_USER/docker/homepage/index.html" << 'HTMLEOF'
         <div class="logo">
             <h1>🏠 Домашний Сервер</h1>
             <p>Войдите в систему управления</p>
-            <div class="ai-badge">🤖 Встроенная нейросеть Phi:2.7b</div>
         </div>
         
         <form id="loginForm">
@@ -1458,27 +1327,12 @@ cat > "/home/$CURRENT_USER/docker/homepage/index.html" << 'HTMLEOF'
             </div>
         </form>
         
-        <div class="password-change-link">
-            <a href="/password-change/">🔐 Сменить пароль авторизации</a>
-        </div>
-        
-        <div class="ai-link">
-            <a href="http://SERVER_IP:11434" target="_blank">🤖 Открыть нейросеть Ollama</a>
-        </div>
-        
         <div class="services-info">
             Доступные сервисы: Jellyfin • Nextcloud • AI Ассистент • VPN • Поиск фильмов
         </div>
     </div>
 
     <script>
-        // Заменяем SERVER_IP на реальный IP
-        document.addEventListener('DOMContentLoaded', function() {
-            const aiLink = document.querySelector('.ai-link a');
-            const currentHost = window.location.hostname;
-            aiLink.href = aiLink.href.replace('SERVER_IP', currentHost);
-        });
-
         document.getElementById('loginForm').addEventListener('submit', function(e) {
             e.preventDefault();
             
@@ -1486,83 +1340,46 @@ cat > "/home/$CURRENT_USER/docker/homepage/index.html" << 'HTMLEOF'
             const password = document.getElementById('password').value;
             const errorMessage = document.getElementById('errorMessage');
             
-            // Проверяем авторизацию через API
-            fetch('/check-auth', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    username: username,
-                    password: password
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    const sessionData = {
-                        user: username,
-                        timestamp: Date.now(),
-                        expires: Date.now() + (60 * 60 * 1000)
-                    };
-                    localStorage.setItem('server_session', JSON.stringify(sessionData));
-                    window.location.href = '/heimdall';
-                } else {
-                    errorMessage.style.display = 'block';
-                    setTimeout(() => {
-                        errorMessage.style.display = 'none';
-                    }, 3000);
-                }
-            })
-            .catch(error => {
-                // Fallback проверка
-                if (username === 'admin' && password === 'homeserver') {
-                    const sessionData = {
-                        user: 'admin',
-                        timestamp: Date.now(),
-                        expires: Date.now() + (60 * 60 * 1000)
-                    };
-                    localStorage.setItem('server_session', JSON.stringify(sessionData));
-                    window.location.href = '/heimdall';
-                } else {
-                    errorMessage.style.display = 'block';
-                    setTimeout(() => {
-                        errorMessage.style.display = 'none';
-                    }, 3000);
-                }
-            });
-        });
-        
-        window.addEventListener('load', function() {
-            const session = localStorage.getItem('server_session');
-            if (session) {
-                const sessionData = JSON.parse(session);
-                if (sessionData.expires > Date.now()) {
-                    window.location.href = '/heimdall';
-                } else {
-                    localStorage.removeItem('server_session');
-                }
+            // Простая проверка логина/пароля
+            if (username === 'admin' && password === 'homeserver') {
+                // Сохраняем сессию
+                localStorage.setItem('heimdall_authenticated', 'true');
+                localStorage.setItem('heimdall_user', username);
+                
+                // Перенаправляем на основную панель Heimdall
+                window.location.href = '/';
+            } else {
+                errorMessage.style.display = 'block';
+                setTimeout(() => {
+                    errorMessage.style.display = 'none';
+                }, 3000);
             }
         });
+        
+        // Проверяем, если пользователь уже авторизован
+        if (localStorage.getItem('heimdall_authenticated') === 'true') {
+            window.location.href = '/';
+        }
     </script>
 </body>
 </html>
-HTMLEOF
+HTML_EOF
 
-# Заменяем SERVER_IP в главной странице
-sed -i "s/SERVER_IP/$SERVER_IP/g" "/home/$CURRENT_USER/docker/homepage/index.html"
+# 19. НАСТРОЙКА HEIMDALL С АВТОРИЗАЦИЕЙ
+log "🔧 Настраиваем Heimdall с авторизацией..."
 
-# 19. НАСТРОЙКА HEIMDALL С ПОИСКОМ И НЕЙРОСЕТЬЮ
-log "🏠 Настраиваем Heimdall с поиском и нейросетью..."
-
-cat > "/home/$CURRENT_USER/scripts/setup-heimdall.sh" << 'HEIMDALL_EOF'
+cat > "/home/$CURRENT_USER/scripts/setup-heimdall-auth.sh" << 'HEIMDALL_AUTH_EOF'
 #!/bin/bash
 
 CURRENT_USERNAME=$(whoami)
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
-echo "Настраиваем Heimdall с поиском и нейросетью..."
+echo "Настраиваем Heimdall с авторизацией..."
 
-sleep 20
+# Ждем запуска Heimdall
+sleep 30
 
+# Создаем apps.json для Heimdall
 cat > "/home/$CURRENT_USERNAME/docker/heimdall/apps.json" << 'APPS_EOF'
 [
     {
@@ -1581,13 +1398,6 @@ cat > "/home/$CURRENT_USERNAME/docker/heimdall/apps.json" << 'APPS_EOF'
         "description": "Медиасервер с фильмами и сериалами"
     },
     {
-        "name": "🤖 Нейросеть Ollama",
-        "color": "#8A2BE2",
-        "icon": "fas fa-robot",
-        "link": "http://SERVER_IP:11434",
-        "description": "Локальная нейросеть Phi:2.7b"
-    },
-    {
         "name": "🔍 Overseerr",
         "color": "#FF6B00", 
         "icon": "fas fa-search-plus",
@@ -1602,13 +1412,6 @@ cat > "/home/$CURRENT_USERNAME/docker/heimdall/apps.json" << 'APPS_EOF'
         "description": "Файловое хранилище с сжатием медиа"
     },
     {
-        "name": "🔒 VPN Сервер",
-        "color": "#4CAF50",
-        "icon": "fas fa-shield-alt",
-        "link": "http://SERVER_IP:8088/vpn-info",
-        "description": "Собственный VPN для обхода блокировок"
-    },
-    {
         "name": "📊 Мониторинг",
         "color": "#4CAF50",
         "icon": "fas fa-chart-bar",
@@ -1621,6 +1424,13 @@ cat > "/home/$CURRENT_USERNAME/docker/heimdall/apps.json" << 'APPS_EOF'
         "icon": "fas fa-key",
         "link": "http://SERVER_IP:8000",
         "description": "Vaultwarden - менеджер паролей"
+    },
+    {
+        "name": "🤖 AI Ассистент",
+        "color": "#8A2BE2",
+        "icon": "fas fa-robot",
+        "link": "http://SERVER_IP:11434",
+        "description": "Ollama - локальная нейросеть"
     },
     {
         "name": "🌀 Торренты",
@@ -1647,13 +1457,15 @@ cat > "/home/$CURRENT_USERNAME/docker/heimdall/apps.json" << 'APPS_EOF'
 APPS_EOF
 
 sed -i "s/SERVER_IP/$SERVER_IP/g" "/home/$CURRENT_USERNAME/docker/heimdall/apps.json"
+
+# Перезапускаем Heimdall
 docker restart heimdall
 
-echo "Heimdall настроен!"
-HEIMDALL_EOF
+echo "Heimdall настроен с авторизацией!"
+HEIMDALL_AUTH_EOF
 
-chmod +x "/home/$CURRENT_USER/scripts/setup-heimdall.sh"
-nohup "/home/$CURRENT_USER/scripts/setup-heimdall.sh" > /dev/null 2>&1 &
+chmod +x "/home/$CURRENT_USER/scripts/setup-heimdall-auth.sh"
+nohup "/home/$CURRENT_USER/scripts/setup-heimdall-auth.sh" > /dev/null 2>&1 &
 
 # 20. СОЗДАНИЕ ИНФОРМАЦИОННЫХ ФАЙЛОВ
 log "📋 Создание информационных файлов..."
@@ -1679,10 +1491,9 @@ cat > "/home/$CURRENT_USER/vpn/vpn-info.txt" << EOF
 
 === ДОСТУП К СЕРВИСАМ ===
 🎬 Jellyfin: http://$DUCKDNS_URL:8096
-🔍 Поиск фильмов: В Jellyfin нажмите "🔍 Поиск фильмов"
-🤖 Нейросеть: http://$DUCKDNS_URL:11434
 ☁️ Nextcloud: http://$DUCKDNS_URL/nextcloud (с автоматическим сжатием медиа)
 🔐 Менеджер паролей: http://$DUCKDNS_URL:8000
+🤖 AI Ассистент: http://$DUCKDNS_URL:11434
 EOF
 
 # 21. ФИНАЛЬНАЯ ИНФОРМАЦИЯ
@@ -1691,11 +1502,11 @@ echo "=========================================="
 echo "🎉 АВТОМАТИЧЕСКАЯ УСТАНОВКА ЗАВЕРШЕНА!"
 echo "=========================================="
 echo ""
-echo "🌐 ВАШ ДОМЕН: https://$DUCKDNS_URL"
+echo "🌐 ВАШ ДОМЕН: $DUCKDNS_URL"
 echo ""
 echo "🔐 СИСТЕМА ДОСТУПА:"
-echo "🏠 ГЛАВНАЯ СТРАНИЦА ВХОДА: http://$SERVER_IP:8088"
-echo "   ИЛИ https://$DUCKDNS_URL:8088"
+echo "🏠 ГЛАВНАЯ СТРАНИЦА: http://$SERVER_IP"
+echo "   ИЛИ http://$DUCKDNS_URL"
 echo ""
 echo "👤 ДАННЫЕ ДЛЯ ВХОДА:"
 echo "   Логин: admin"
@@ -1706,21 +1517,20 @@ echo "✅ Автоматический поиск фильмов в Jellyfin"
 echo "✅ Скачивание за 30 секунд с обложками и описанием"
 echo "✅ Автоматическое удаление просмотренных фильмов"
 echo "✅ Собственный VPN с автосменой портов"
-echo "✅ Веб-интерфейс для смены пароля авторизации"
+echo "✅ Веб-интерфейс для смены пароля"
 echo "✅ Статический IP настроен автоматически"
 echo "✅ АВТОМАТИЧЕСКОЕ СЖАТИЕ ФОТО И ВИДЕО В NEXTCLOUD"
-echo "✅ 🤖 ВСТРОЕННАЯ НЕЙРОСЕТЬ Phi:2.7b"
 echo ""
 echo "🔍 КАК ИСКАТЬ ФИЛЬМЫ:"
-echo "1. Зайдите в Jellyfin"
-echo "2. Нажмите '🔍 Поиск фильмов' в главном меню"
+echo "1. Зайдите на главную страницу"
+echo "2. Нажмите '🔍 Поиск фильмов'"
 echo "3. Введите название фильма"
 echo "4. Через 30 секунд фильм готов к просмотру!"
 echo ""
-echo "🤖 НЕЙРОСЕТЬ:"
-echo "✅ Локальная модель Phi:2.7b"
-echo "✅ Доступна по адресу: http://$SERVER_IP:11434"
-echo "✅ Интегрирована в главную страницу"
+echo "🌍 ДЛЯ ДОСТУПА ИЗВНЕ:"
+echo "1. ПРОБРОСИТЕ В РОУТЕРЕ ПОРТ: 80 → $SERVER_IP:80"
+echo "2. ДАЙТЕ ДРУЗЬЯМ ССЫЛКУ: http://$DUCKDNS_URL"
+echo "3. ДАННЫЕ ВХОДА: admin / homeserver"
 echo ""
 echo "🖼️ СЖАТИЕ МЕДИАФАЙЛОВ:"
 echo "✅ Автоматическое сжатие JPEG, PNG, WebP"
@@ -1733,25 +1543,21 @@ echo "🔒 VPN ИНФОРМАЦИЯ:"
 echo "Порт VPN: $VPN_PORT (меняется каждые 24 часа)"
 echo "Конфиг для Hiddify: /home/$CURRENT_USER/vpn/hiddify-client.conf"
 echo ""
-echo "🔐 СМЕНА ПАРОЛЯ АВТОРИЗАЦИИ:"
-echo "Веб-интерфейс: http://$SERVER_IP:8088/password-change/"
-echo "Или команда: /home/$CURRENT_USER/scripts/change-auth-password.sh"
+echo "🔐 СМЕНА ПАРОЛЯ:"
+echo "Команда: /home/$CURRENT_USER/scripts/change-password.sh"
 echo ""
 echo "📊 ОСНОВНЫЕ СЕРВИСЫ:"
 echo "🎬 Jellyfin: http://$DUCKDNS_URL:8096"
-echo "🔍 Поиск фильмов: В Jellyfin главное меню"
-echo "🤖 Нейросеть: http://$DUCKDNS_URL:11434"
 echo "☁️ Nextcloud: http://$DUCKDNS_URL/nextcloud (с сжатием медиа)"
 echo "🔐 Менеджер паролей: http://$DUCKDNS_URL:8000"
+echo "🤖 Нейросеть: http://$DUCKDNS_URL:11434"
 echo "📊 Мониторинг: http://$DUCKDNS_URL:3001"
 echo ""
 echo "⚡ КАК НАЧАТЬ:"
-echo "1. Откройте: http://$SERVER_IP:8088"
+echo "1. Откройте: http://$SERVER_IP"
 echo "2. Войдите (admin/homeserver)"
-echo "3. Откройте Jellyfin через панель управления"
-echo "4. Наслаждайтесь поиском и просмотром фильмов!"
-echo "5. Попробуйте нейросеть по ссылке на главной странице!"
-echo "6. Загружайте фото/видео в Nextcloud - они автоматически сожмутся!"
+echo "3. Нажмите на Jellyfin для просмотра фильмов"
+echo "4. Наслаждайтесь автоматической системой!"
 echo ""
 echo "=========================================="
 echo "🚀 Ваш умный домашний сервер готов к работе!"
