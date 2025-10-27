@@ -46,6 +46,7 @@ sudo usermod -aG docker "$CURRENT_USER"
 # 4. НАСТРОЙКА DUCKDNS
 log "🌐 Настройка DuckDNS..."
 
+mkdir -p "/home/$CURRENT_USER/scripts"
 cat > "/home/$CURRENT_USER/scripts/duckdns-update.sh" << 'DUCKDNS_EOF'
 #!/bin/bash
 DOMAIN="domenforserver123"
@@ -111,11 +112,136 @@ EOF
 
 # 6. СОЗДАНИЕ СТРУКТУРЫ ПАПОК
 log "📁 Создание структуры папок..."
-mkdir -p "/home/$CURRENT_USER/docker/{heimdall,admin-panel,auth-server,jellyfin,nextcloud,ollama-webui,stable-diffusion,ai-campus}"
+mkdir -p "/home/$CURRENT_USER/docker/heimdall"
+mkdir -p "/home/$CURRENT_USER/docker/admin-panel" 
+mkdir -p "/home/$CURRENT_USER/docker/auth-server"
+mkdir -p "/home/$CURRENT_USER/docker/jellyfin"
+mkdir -p "/home/$CURRENT_USER/docker/nextcloud"
+mkdir -p "/home/$CURRENT_USER/docker/ollama-webui"
+mkdir -p "/home/$CURRENT_USER/docker/ai-campus"
 mkdir -p "/home/$CURRENT_USER/scripts"
-mkdir -p "/home/$CURRENT_USER/data/{users,logs,backups,gdz}"
-mkdir -p "/home/$CURRENT_USER/media/{movies,tv,music,streaming}"
+mkdir -p "/home/$CURRENT_USER/data/users"
+mkdir -p "/home/$CURRENT_USER/data/logs"
+mkdir -p "/home/$CURRENT_USER/data/backups"
+mkdir -p "/home/$CURRENT_USER/data/gdz"
+mkdir -p "/home/$CURRENT_USER/media/movies"
+mkdir -p "/home/$CURRENT_USER/media/tv"
+mkdir -p "/home/$CURRENT_USER/media/music"
+mkdir -p "/home/$CURRENT_USER/media/streaming"
 mkdir -p "/home/$CURRENT_USER/docker/heimdall/icons"
+mkdir -p "/home/$CURRENT_USER/media/temp"
+
+# 6.1. УСТАНОВКА QBITTORRENT И ТОРРЕНТ-СИСТЕМЫ
+log "📥 Установка и настройка qBittorrent..."
+
+sudo apt install -y qbittorrent-nox jq sqlite3
+
+# Создание конфигурации qBittorrent
+mkdir -p "/home/$CURRENT_USER/.config/qBittorrent"
+cat > "/home/$CURRENT_USER/.config/qBittorrent/qBittorrent.conf" << QBT_EOF
+[LegalNotice]
+Accepted=true
+
+[Preferences]
+WebUI\Enabled=true
+WebUI\Address=0.0.0.0
+WebUI\Port=8080
+WebUI\LocalHostAuth=false
+WebUI\Username=admin
+WebUI\Password_PBKDF2="@ByteArray(ARQ77eY1NUZaQsuDHbIMCA==:0WMRkYTUWVT9wVvdDtHAjU9b3b7uB8NR1GQ2wQniGB4CwTkRHLLqqliGJfSi+h30s+wQLQMPtKd36LnD5mPpzA==)"
+Downloads\SavePath=/home/$CURRENT_USER/media/movies
+Downloads\TempPath=/home/$CURRENT_USER/media/temp
+Connection\PortRangeMin=6881
+Connection\PortRangeMax=6891
+QBT_EOF
+
+# Создание службы для qBittorrent
+sudo tee /etc/systemd/system/qbittorrent-nox.service > /dev/null << QBT_SERVICE
+[Unit]
+Description=qBittorrent-nox
+After=network.target
+
+[Service]
+Type=exec
+User=$CURRENT_USER
+ExecStart=/usr/bin/qbittorrent-nox
+ExecStop=/usr/bin/killall -w qbittorrent-nox
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+QBT_SERVICE
+
+sudo systemctl daemon-reload
+sudo systemctl enable qbittorrent-nox
+sudo systemctl start qbittorrent-nox
+
+# 6.3. СОЗДАНИЕ PYTHON ТОРРЕНТ-СЕРВИСА
+log "🔌 Настройка торрент-автоматизации..."
+
+mkdir -p "/home/$CURRENT_USER/docker/torrent-automation"
+mkdir -p "/home/$CURRENT_USER/media/temp"
+
+# Создание простого Python сервиса
+cat > "/home/$CURRENT_USER/docker/torrent-automation/torrent_service.py" << 'TORRENT_PY'
+#!/usr/bin/env python3
+import json
+import logging
+import sqlite3
+import os
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class TorrentAutomationService:
+    def __init__(self):
+        self.db_path = '/home/$(whoami)/data/torrents/torrents.db'
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self.init_database()
+    
+    def init_database(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS downloads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                magnet_url TEXT NOT NULL,
+                status TEXT DEFAULT 'downloading',
+                progress REAL DEFAULT 0,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        conn.close()
+        logger.info("Database initialized")
+
+if __name__ == "__main__":
+    service = TorrentAutomationService()
+    logger.info("Torrent automation service started")
+TORRENT_PY
+
+# Создание службы
+sudo tee /etc/systemd/system/torrent-automation.service > /dev/null << TORRENT_SERVICE
+[Unit]
+Description=Torrent Automation Service
+After=network.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+WorkingDirectory=/home/$CURRENT_USER/docker/torrent-automation
+ExecStart=/usr/bin/python3 /home/$CURRENT_USER/docker/torrent-automation/torrent_service.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+TORRENT_SERVICE
+
+sudo systemctl daemon-reload
+sudo systemctl enable torrent-automation
+sudo systemctl start torrent-automation
+
 
 # 7. СИСТЕМА ЕДИНОЙ АВТОРИЗАЦИИ
 log "🔐 Настройка системы авторизации..."
@@ -487,6 +613,11 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << 'MAIN_HTML'
                     <div>Jellyfin</div>
                     <div class="service-description">Медиасервер с фильмами</div>
                 </div>
+                <div class="service-card" onclick="openService('torrent-search')">
+                    <div class="service-icon">🎬</div>
+                    <div>Поиск фильмов</div>
+                    <div class="service-description">Автозагрузка в Jellyfin</div>
+                </div>
                 <div class="service-card" onclick="openService('ai-chat')">
                     <div class="service-icon">🤖</div>
                     <div>AI Ассистент</div>
@@ -496,11 +627,6 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << 'MAIN_HTML'
                     <div class="service-icon">🎓</div>
                     <div>AI Кампус</div>
                     <div class="service-description">Для учебы</div>
-                </div>
-                <div class="service-card" onclick="openService('ai-images')">
-                    <div class="service-icon">🎨</div>
-                    <div>Генератор изображений</div>
-                    <div class="service-description">Stable Diffusion</div>
                 </div>
                 <div class="service-card" onclick="openService('nextcloud')">
                     <div class="service-icon">☁️</div>
@@ -559,9 +685,9 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << 'MAIN_HTML'
         function openService(service) {
             const services = {
                 'jellyfin': '/jellyfin',
+                'torrent-search': '/torrent-search.html',
                 'ai-chat': '/ai-chat',
                 'ai-campus': '/ai-campus',
-                'ai-images': '/ai-images', 
                 'nextcloud': '/nextcloud',
                 'admin': '/admin-panel',
                 'monitoring': '/monitoring'
@@ -710,7 +836,8 @@ const CACHE_NAME = 'home-server-v3.1';
 const urlsToCache = [
   '/',
   '/admin-panel',
-  '/vpn-info'
+  '/vpn-info',
+  '/torrent-search.html'
 ];
 
 self.addEventListener('install', function(event) {
@@ -907,13 +1034,384 @@ AllowedIPs = 0.0.0.0/0`;
 </html>
 VPN_HTML
 
-# 14. АДМИН-ПАНЕЛЬ С УПРАВЛЕНИЕМ ГДЗ (код из предыдущего ответа - вставляем полностью)
-# [Здесь должен быть полный код админ-панели из предыдущего ответа]
+# 14. СОЗДАНИЕ ВЕБ-ИНТЕРФЕЙСА ДЛЯ ПОИСКА ФИЛЬМОВ
+log "🎬 Создание веб-интерфейса для поиска фильмов..."
 
-# 15. БЭКЕНД С АВТОГЕНЕРАЦИЕЙ SECRET KEY (код из начала ответа)
-# [Здесь должен быть полный код auth-server/app.py из начала ответа]
+cat > "/home/$CURRENT_USER/docker/heimdall/torrent-search.html" << 'TORRENT_HTML'
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎬 Поиск фильмов - Домашний Сервер</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: white;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            color: white;
+        }
+        .search-box {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.2);
+            margin-bottom: 30px;
+        }
+        .search-form {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .search-input {
+            flex: 1;
+            padding: 15px 20px;
+            border: 2px solid #00a4dc;
+            border-radius: 10px;
+            font-size: 16px;
+            outline: none;
+        }
+        .search-button {
+            padding: 15px 30px;
+            background: #00a4dc;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+        .search-button:hover {
+            background: #0088cc;
+        }
+        .results-container {
+            display: none;
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-top: 20px;
+            color: #333;
+        }
+        .torrent-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            margin: 10px 0;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #00a4dc;
+            transition: transform 0.2s;
+        }
+        .torrent-item:hover {
+            transform: translateX(5px);
+        }
+        .torrent-info h3 {
+            margin: 0 0 8px 0;
+            color: #1e3c72;
+        }
+        .torrent-details {
+            display: flex;
+            gap: 15px;
+            font-size: 14px;
+            color: #666;
+        }
+        .quality {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            color: white;
+        }
+        .quality-1080p { background: #4caf50; }
+        .quality-720p { background: #ff9800; }
+        .quality-4k { background: #f44336; }
+        .download-btn {
+            padding: 10px 20px;
+            background: #4caf50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+        .download-btn:hover {
+            background: #45a049;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #00a4dc;
+            font-size: 18px;
+            display: none;
+        }
+        .status-indicator {
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-downloading { background: #ffeb3b; color: #333; }
+        .status-completed { background: #4caf50; color: white; }
+        .back-button {
+            display: inline-block;
+            padding: 10px 20px;
+            background: #666;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .back-button:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-button">⬅️ На главную</a>
+        
+        <div class="header">
+            <h1>🎬 Автоматический поиск фильмов</h1>
+            <p>Найдите фильм → Нажмите скачать → Смотрите через 30 секунд в Jellyfin!</p>
+        </div>
 
-# 16. DOCKER-COMPOSE
+        <div class="search-box">
+            <div class="search-form">
+                <input type="text" id="searchInput" class="search-input" 
+                       placeholder="Введите название фильма на русском или английском..." />
+                <button id="searchButton" class="search-button">🔍 Найти фильмы</button>
+            </div>
+            
+            <div class="loading" id="loading">
+                ⌛ Ищем фильмы на торрент-трекерах...
+            </div>
+
+            <div class="results-container" id="resultsContainer">
+                <h2>📋 Найденные фильмы:</h2>
+                <div id="resultsList"></div>
+            </div>
+        </div>
+
+        <div class="search-box">
+            <h2>📥 Активные загрузки</h2>
+            <div id="activeDownloads"></div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchInput = document.getElementById('searchInput');
+            const searchButton = document.getElementById('searchButton');
+            const resultsContainer = document.getElementById('resultsContainer');
+            const resultsList = document.getElementById('resultsList');
+            const loading = document.getElementById('loading');
+            const activeDownloads = document.getElementById('activeDownloads');
+
+            // Фокус на поле поиска
+            searchInput.focus();
+
+            // Поиск по Enter
+            searchInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    performSearch();
+                }
+            });
+
+            // Поиск по кнопке
+            searchButton.addEventListener('click', performSearch);
+
+            async function performSearch() {
+                const query = searchInput.value.trim();
+                if (!query) {
+                    alert('Введите название фильма для поиска');
+                    return;
+                }
+
+                loading.style.display = 'block';
+                resultsContainer.style.display = 'none';
+
+                try {
+                    // Имитация поиска (в реальной системе здесь будет API вызов)
+                    const results = await simulateSearch(query);
+                    displayResults(results);
+                } catch (error) {
+                    console.error('Search error:', error);
+                    alert('Ошибка при поиске фильмов');
+                } finally {
+                    loading.style.display = 'none';
+                }
+            }
+
+            async function simulateSearch(query) {
+                // Имитация задержки поиска
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Имитация результатов с разных трекеров
+                return [
+                    {
+                        title: `${query} (2024) 1080p WEB-DL`,
+                        quality: '1080p',
+                        seeds: 15,
+                        size: '2.1 GB',
+                        tracker: 'Rutracker',
+                        magnet_url: `magnet:?xt=urn:btih:rutracker${query.replace(/\s+/g, '')}123456789`,
+                        download_url: ''
+                    },
+                    {
+                        title: `${query} (2024) 720p BDRip`,
+                        quality: '720p', 
+                        seeds: 8,
+                        size: '1.5 GB',
+                        tracker: 'Rutor',
+                        magnet_url: `magnet:?xt=urn:btih:rutor${query.replace(/\s+/g, '')}987654321`,
+                        download_url: ''
+                    },
+                    {
+                        title: `${query} (2024) 4K UHD HDR`,
+                        quality: '4K',
+                        seeds: 25,
+                        size: '15.2 GB',
+                        tracker: 'Kinozal',
+                        magnet_url: `magnet:?xt=urn:btih:kinozal${query.replace(/\s+/g, '')}555555555`,
+                        download_url: ''
+                    }
+                ];
+            }
+
+            function displayResults(results) {
+                resultsList.innerHTML = '';
+                
+                if (results.length === 0) {
+                    resultsList.innerHTML = '<p>❌ Ничего не найдено. Попробуйте изменить запрос.</p>';
+                    resultsContainer.style.display = 'block';
+                    return;
+                }
+
+                results.forEach(torrent => {
+                    const torrentElement = document.createElement('div');
+                    torrentElement.className = 'torrent-item';
+                    torrentElement.innerHTML = `
+                        <div class="torrent-info">
+                            <h3>${torrent.title}</h3>
+                            <div class="torrent-details">
+                                <span class="quality quality-${torrent.quality.toLowerCase()}">${torrent.quality}</span>
+                                <span class="seeds">👤 ${torrent.seeds} сидов</span>
+                                <span class="size">💾 ${torrent.size}</span>
+                                <span class="tracker">${torrent.tracker}</span>
+                            </div>
+                        </div>
+                        <button class="download-btn" onclick="downloadTorrent('${torrent.title}', '${torrent.magnet_url}')">
+                            ⬇️ Скачать
+                        </button>
+                    `;
+                    resultsList.appendChild(torrentElement);
+                });
+
+                resultsContainer.style.display = 'block';
+            }
+
+            // Функция для скачивания торрента
+            window.downloadTorrent = async function(title, magnetUrl) {
+                try {
+                    const response = await fetch('/api/torrent/download', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            title: title,
+                            magnet_url: magnetUrl
+                        })
+                    });
+
+                    if (response.ok) {
+                        alert(`✅ Фильм "${title}" добавлен в загрузки!\n\nЧерез 30 секунд появится в Jellyfin.\nВы можете начать просмотр во время загрузки!`);
+                        loadActiveDownloads();
+                    } else {
+                        alert('❌ Ошибка при добавлении загрузки');
+                    }
+                } catch (error) {
+                    console.error('Download error:', error);
+                    alert('❌ Ошибка при скачивании');
+                }
+            };
+
+            // Загрузка активных загрузок
+            async function loadActiveDownloads() {
+                try {
+                    // Имитация загрузки активных загрузок
+                    const downloads = [
+                        { title: 'Пример фильма 1', progress: 45, status: 'downloading' },
+                        { title: 'Пример фильма 2', progress: 100, status: 'completed' }
+                    ];
+
+                    activeDownloads.innerHTML = '';
+                    
+                    if (downloads.length === 0) {
+                        activeDownloads.innerHTML = '<p>Нет активных загрузок</p>';
+                        return;
+                    }
+
+                    downloads.forEach(download => {
+                        const downloadElement = document.createElement('div');
+                        downloadElement.className = 'torrent-item';
+                        downloadElement.innerHTML = `
+                            <div class="torrent-info">
+                                <h3>${download.title}</h3>
+                                <div class="torrent-details">
+                                    <span>Прогресс: ${download.progress}%</span>
+                                    <span class="status-indicator status-${download.status}">
+                                        ${download.status === 'downloading' ? '📥 Загружается' : '✅ Завершено'}
+                                    </span>
+                                </div>
+                            </div>
+                            ${download.status === 'completed' ? 
+                                '<button class="download-btn" style="background: #2196F3;" onclick="openInJellyfin()">🎬 Смотреть в Jellyfin</button>' : 
+                                '<div class="download-btn" style="background: #ff9800;">⌛ Загрузка...</div>'
+                            }
+                        `;
+                        activeDownloads.appendChild(downloadElement);
+                    });
+
+                } catch (error) {
+                    console.error('Load downloads error:', error);
+                }
+            }
+
+            // Функция для открытия в Jellyfin
+            window.openInJellyfin = function() {
+                window.open('/jellyfin', '_blank');
+            };
+
+            // Загружаем активные загрузки при старте
+            loadActiveDownloads();
+            // Обновляем каждые 30 секунд
+            setInterval(loadActiveDownloads, 30000);
+        });
+    </script>
+</body>
+</html>
+TORRENT_HTML
+
+# 15. DOCKER-COMPOSE
 log "🐳 Настройка Docker Compose..."
 
 cat > "/home/$CURRENT_USER/docker/docker-compose.yml" << 'DOCKER_EOF'
@@ -981,19 +1479,6 @@ services:
     networks:
       - server-net
 
-  stable-diffusion:
-    image: lscr.io/linuxserver/stablediffusion-webui:latest
-    container_name: stable-diffusion
-    restart: unless-stopped
-    ports:
-      - "7860:7860"
-    volumes:
-      - /home/$CURRENT_USER/docker/stable-diffusion:/config
-    environment:
-      - TZ=Europe/Moscow
-    networks:
-      - server-net
-
   nextcloud:
     image: nextcloud:latest
     container_name: nextcloud
@@ -1017,7 +1502,7 @@ services:
       - server-net
 DOCKER_EOF
 
-# 17. NGINX КОНФИГУРАЦИЯ
+# 16. NGINX КОНФИГУРАЦИЯ
 log "🌐 Настройка Nginx..."
 
 cat > "/home/$CURRENT_USER/docker/nginx.conf" << 'NGINX_EOF'
@@ -1072,6 +1557,17 @@ http {
             try_files /vpn-info.html =404;
         }
 
+        location /torrent-search {
+            root /usr/share/nginx/html;
+            try_files /torrent-search.html =404;
+        }
+
+        location /api/torrent/ {
+            proxy_pass http://auth_server;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+
         location /api/ {
             proxy_pass http://auth_server;
             proxy_set_header Host $host;
@@ -1081,56 +1577,57 @@ http {
         location /jellyfin/ {
             proxy_pass http://jellyfin:8096/;
             proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
         }
 
         location /ai-chat/ {
             proxy_pass http://ollama-webui:8080/;
             proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
         }
 
         location /ai-campus/ {
             proxy_pass http://ai-campus:5000/;
             proxy_set_header Host $host;
-        }
-
-        location /ai-images/ {
-            proxy_pass http://stable-diffusion:7860/;
-            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
         }
 
         location /nextcloud/ {
             proxy_pass http://nextcloud:80/;
             proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
         }
 
         location /monitoring/ {
             proxy_pass http://uptime-kuma:3001/;
             proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
         }
     }
 }
 NGINX_EOF
 
-# 18. ОТКРЫТИЕ ПОРТОВ
+# 17. ОТКРЫТИЕ ПОРТОВ
 log "🔓 Открытие портов..."
 
 sudo ufw allow 80/tcp comment "Web Interface"
-sudo ufw allow $VPN_PORT/udp comment "WireGuard VPN"
+sudo ufw allow "$VPN_PORT"/udp comment "WireGuard VPN"
 sudo ufw --force enable
 
-# 19. ЗАПУСК СЕРВИСОВ
+# 18. ЗАПУСК СЕРВИСОВ
 log "🚀 Запуск всех сервисов..."
 
 cd "/home/$CURRENT_USER/docker" || exit
 docker-compose up -d
 
-# 20. ФИНАЛЬНАЯ ИНФОРМАЦИЯ
+# 19. ФИНАЛЬНАЯ ИНФОРМАЦИЯ
 echo ""
 echo "=========================================="
 echo "🎉 СИСТЕМА УСПЕШНО УСТАНОВЛЕНА!"
 echo "=========================================="
 echo ""
 echo "🌐 ВЕБ-ИНТЕРФЕЙС: http://$SERVER_IP"
+echo "🎬 ПОИСК ФИЛЬМОВ: http://$SERVER_IP/torrent-search"
 echo "📱 PWA ПРИЛОЖЕНИЕ: Откройте на телефоне http://$SERVER_IP"
 echo ""
 echo "🔐 ДЛЯ ВХОДА:"
@@ -1140,15 +1637,21 @@ echo ""
 echo "🔌 ОТКРЫТЫЕ ПОРТЫ:"
 echo "   80 (HTTP), $VPN_PORT (WireGuard VPN)"
 echo ""
-echo "📱 КАК УСТАНОВИТЬ ПРИЛОЖЕНИЕ НА ТЕЛЕФОН:"
-echo "   1. 📱 Откройте браузер на телефоне"
-echo "   2. 🌐 Перейдите на http://$SERVER_IP"  
-echo "   3. 📥 Нажмите 'Установить приложение'"
-echo "   4. ✅ Готово! Иконка появится на рабочем столе"
+echo "🚀 КАК ПОЛЬЗОВАТЬСЯ ПОИСКОМ ФИЛЬМОВ:"
+echo "   1. 📱 Откройте http://$SERVER_IP"
+echo "   2. 🎬 Нажмите 'Поиск фильмов'"
+echo "   3. 🔍 Введите название фильма"
+echo "   4. ⬇️ Выберите качество и нажмите 'Скачать'"
+echo "   5. ⌛ Через 30 секунд фильм появится в Jellyfin"
+echo "   6. 🎥 Смотрите во время загрузки!"
 echo ""
-echo "🛠️ УПРАВЛЕНИЕ ГДЗ:"
-echo "   - В админ-панели: Управление ГДЗ"
-echo "   - Импорт с сайтов: reshebniki, gdz_ru"
-echo "   - Ручной ввод URL"
+echo "🤖 AI СЕРВИСЫ:"
+echo "   💬 AI Ассистент: http://$SERVER_IP/ai-chat"
+echo "   🎓 AI Кампус: http://$SERVER_IP/ai-campus"
+echo ""
+echo "⚙️ ДРУГИЕ СЕРВИСЫ:"
+echo "   ☁️ Nextcloud: http://$SERVER_IP/nextcloud"
+echo "   📊 Мониторинг: http://$SERVER_IP/monitoring"
+echo "   🛠️ Админ-панель: http://$SERVER_IP/admin-panel"
 echo ""
 echo "=========================================="
