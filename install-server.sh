@@ -1,11 +1,5 @@
 #!/bin/bash
 
-# ==========================================
-# 🎬 ПОЛНОСТЬЮ РАБОЧИЙ СКРИПТ УСТАНОВКИ С РЕАЛЬНЫМ АВТОМАТИЧЕСКИМ ПОИСКОМ ФИЛЬМОВ
-# Версия 7.0 - ПОЛНОСТЬЮ РАБОЧАЯ СИСТЕМА БЕЗ ЗАГЛУШЕК
-# ==========================================
-
-# Функции для безопасного ввода
 safe_input() {
     local prompt="$1"
     local var_name="$2"
@@ -28,7 +22,6 @@ safe_input() {
     done
 }
 
-# Генерация безопасных учетных данных для qBittorrent
 generate_qbittorrent_credentials() {
     local config_dir="/home/$CURRENT_USER/.config"
     local creds_file="$config_dir/qbittorrent.creds"
@@ -55,9 +48,8 @@ QB_CREDS
     export QB_USERNAME QB_PASSWORD
 }
 
-# Запрос конфигурационных данных
 echo "=========================================="
-echo "🔧 НАСТРОЙКА ПОЛНОСТЬЮ РАБОЧЕЙ СИСТЕМЫ АВТОМАТИЧЕСКОГО ПОИСКА ФИЛЬМОВ"
+echo "🔧 НАСТРОЙКА СИСТЕМЫ"
 echo "=========================================="
 
 safe_input "Введите домен DuckDNS (без .duckdns.org)" DOMAIN
@@ -67,10 +59,8 @@ safe_input "Введите пароль администратора" ADMIN_PASS
 CURRENT_USER=$(whoami)
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
-# Генерация учетных данных qBittorrent
 generate_qbittorrent_credentials
 
-# Создание защищенного конфигурационного файла
 mkdir -p "/home/$CURRENT_USER/.config"
 cat > "/home/$CURRENT_USER/.config/server_env" << CONFIG_EOF
 DOMAIN="$DOMAIN"
@@ -85,12 +75,10 @@ CONFIG_EOF
 chmod 600 "/home/$CURRENT_USER/.config/server_env"
 source "/home/$CURRENT_USER/.config/server_env"
 
-# Настройки
 set -eEuo pipefail
 trap 'rollback' ERR
 trap 'cleanup' EXIT
 
-# Функции
 log() {
     echo "[$(date '+%H:%M:%S')] $1" | tee -a "/home/$CURRENT_USER/install.log"
 }
@@ -214,15 +202,10 @@ generate_auth_secret() {
     export AUTH_SECRET
 }
 
-# Создаем лог файл
 mkdir -p "/home/$CURRENT_USER"
 touch "/home/$CURRENT_USER/install.log"
 chmod 600 "/home/$CURRENT_USER/install.log"
 
-# Проверка системных требований
-log "🔍 Проверка системных требований..."
-
-# Проверка пользователя
 if [ "$CURRENT_USER" = "root" ]; then
     echo "❌ ОШИБКА: Не запускайте скрипт от root! Используйте обычного пользователя с sudo правами."
     exit 1
@@ -234,7 +217,7 @@ if ! sudo -n true 2>/dev/null; then
 fi
 
 echo "=========================================="
-echo "🚀 УСТАНОВКА ПОЛНОСТЬЮ РАБОЧЕЙ СИСТЕМЫ С АВТОМАТИЧЕСКИМ ПОИСКОМ ФИЛЬМОВ"
+echo "🚀 УСТАНОВКА СИСТЕМЫ"
 echo "=========================================="
 
 TOTAL_MEM=$(free -g | grep Mem: | awk '{print $2}')
@@ -253,20 +236,13 @@ check_ports
 
 generate_auth_secret
 
-# ==========================================
-# 1. ОБНОВЛЕНИЕ СИСТЕМЫ
-# ==========================================
 log "📦 Обновление системы..."
 execute_command "sudo apt update" "Обновление списка пакетов"
 execute_command "sudo apt upgrade -y" "Обновление системы"
 
-# ==========================================
-# 2. УСТАНОВКА ЗАВИСИМОСТЕЙ  
-# ==========================================
 log "📦 Установка пакетов..."
 execute_command "sudo apt install -y curl wget git docker.io nginx mysql-server python3 python3-pip cron nano htop tree unzip net-tools wireguard resolvconf qrencode fail2ban software-properties-common apt-transport-https ca-certificates gnupg bc jq" "Установка основных пакетов"
 
-# Установка docker-compose
 install_docker_compose() {
     if command -v docker-compose &> /dev/null || docker compose version &> /dev/null; then
         log "✅ Docker Compose уже установлен"
@@ -300,17 +276,11 @@ install_docker_compose() {
 
 install_docker_compose
 
-# ==========================================
-# 3. НАСТРОЙКА DOCKER
-# ==========================================
 log "🐳 Настройка Docker..."
 execute_command "sudo systemctl enable docker" "Включение Docker"
 execute_command "sudo systemctl start docker" "Запуск Docker"
 execute_command "sudo usermod -aG docker $CURRENT_USER" "Добавление пользователя в группу docker"
 
-# ==========================================
-# 4. НАСТРОЙКА DUCKDNS
-# ==========================================
 log "🌐 Настройка DuckDNS..."
 
 mkdir -p "/home/$CURRENT_USER/scripts"
@@ -321,10 +291,8 @@ source "/home/$(whoami)/.config/server_env"
 
 URL="https://www.duckdns.org/update?domains=${DOMAIN}&token=${TOKEN}&ip="
 
-# Получаем внешний IP
 CURRENT_IP=$(curl -s http://checkip.amazonaws.com || curl -s http://ipinfo.io/ip || curl -s http://ifconfig.me)
 
-# Обновляем DuckDNS
 response=$(curl -s -w "\n%{http_code}" "${URL}${CURRENT_IP}")
 http_code=$(echo "$response" | tail -n1)
 content=$(echo "$response" | head -n1)
@@ -352,9 +320,6 @@ else
     log "⚠️ Предупреждение: Не удалось обновить DuckDNS, продолжаем установку..."
 fi
 
-# ==========================================
-# 5. НАСТРОЙКА VPN (WIREGUARD)
-# ==========================================
 log "🔒 Настройка VPN WireGuard..."
 
 if ! sudo modprobe wireguard 2>/dev/null; then
@@ -463,9 +428,6 @@ else
     sudo wg-quick up wg0
 fi
 
-# ==========================================
-# 6. СОЗДАНИЕ СТРУКТУРЫ ПАПОК
-# ==========================================
 log "📁 Создание структуры папок..."
 mkdir -p "/home/$CURRENT_USER/docker/heimdall"
 mkdir -p "/home/$CURRENT_USER/docker/admin-panel"
@@ -481,7 +443,6 @@ mkdir -p "/home/$CURRENT_USER/data/users"
 mkdir -p "/home/$CURRENT_USER/data/logs"
 mkdir -p "/home/$CURRENT_USER/data/backups"
 
-# Папки для медиасистемы
 mkdir -p "/home/$CURRENT_USER/docker/qbittorrent"
 mkdir -p "/home/$CURRENT_USER/docker/search-backend"
 mkdir -p "/home/$CURRENT_USER/docker/media-manager"
@@ -509,15 +470,10 @@ sudo chmod 755 "/home/$CURRENT_USER/docker"
 sudo chmod 755 "/home/$CURRENT_USER/data"
 sudo chmod 755 "/home/$CURRENT_USER/media"
 
-# ==========================================
-# 7. СИСТЕМА АВТОРИЗАЦИИ С ХЕШИРОВАНИЕМ ПАРОЛЕЙ
-# ==========================================
 log "🔐 Настройка системы авторизации..."
 
-# Хешируем пароли с использованием bcrypt (более безопасно)
 hash_password() {
     local password="$1"
-    # Используем Python для генерации bcrypt хеша
     python3 -c "
 import bcrypt
 import sys
@@ -528,7 +484,6 @@ print(hashed.decode('utf-8'))
 " "$password"
 }
 
-# Генерируем хеши паролей
 ADMIN_PASS_HASH=$(hash_password "$ADMIN_PASS")
 USER_PASS_HASH=$(hash_password "user123")  
 TEST_PASS_HASH=$(hash_password "test123")
@@ -583,15 +538,10 @@ AUDIT_EOF
 chmod 600 "/home/$CURRENT_USER/data/users/users.json"
 chmod 600 "/home/$CURRENT_USER/data/logs/audit.log"
 
-# Устанавливаем Python зависимости для bcrypt
 sudo pip3 install bcrypt
 
-# ==========================================
-# 8. РЕАЛЬНЫЙ AI CHAT С OLLAMA
-# ==========================================
 log "🤖 Создание реального AI чата..."
 
-# Устанавливаем зависимости для AI
 sudo pip3 install flask requests
 
 cat > "/home/$CURRENT_USER/docker/ai-chat/app.py" << 'AI_CHAT_EOF'
@@ -609,7 +559,6 @@ app.secret_key = os.environ.get('SECRET_KEY', 'ai-chat-secret-key-change-in-prod
 
 OLLAMA_URL = "http://ollama:11434"
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -620,7 +569,6 @@ class RealOllamaManager:
         self.last_update = None
     
     def check_availability(self):
-        """Проверка доступности Ollama сервиса"""
         try:
             response = requests.get(f"{self.base_url}/api/tags", timeout=10)
             return response.status_code == 200
@@ -629,7 +577,6 @@ class RealOllamaManager:
             return False
     
     def get_available_models(self):
-        """Получение списка доступных моделей"""
         try:
             response = requests.get(f"{self.base_url}/api/tags", timeout=30)
             if response.status_code == 200:
@@ -643,7 +590,6 @@ class RealOllamaManager:
             return []
     
     def ensure_model_available(self, model_name="llama2"):
-        """Гарантирует, что модель доступна"""
         try:
             models = self.get_available_models()
             model_exists = any(model_name in model['name'] for model in models)
@@ -657,11 +603,9 @@ class RealOllamaManager:
             return False
     
     def pull_model(self, model_name):
-        """Загрузка модели Ollama"""
         try:
             logger.info(f"Начинаем загрузку модели {model_name}...")
             
-            # Используем subprocess для отслеживания прогресса
             process = subprocess.Popen(
                 ['docker', 'exec', 'ollama', 'ollama', 'pull', model_name],
                 stdout=subprocess.PIPE,
@@ -669,7 +613,6 @@ class RealOllamaManager:
                 universal_newlines=True
             )
             
-            # Читаем вывод в реальном времени
             while True:
                 output = process.stdout.readline()
                 if output == '' and process.poll() is not None:
@@ -684,7 +627,6 @@ class RealOllamaManager:
             return False
     
     def select_model_for_mode(self, mode):
-        """Выбор модели в зависимости от режима"""
         model_priority = {
             'hacker': ['codellama', 'llama2', 'mistral'],
             'norules': ['llama2-uncensored', 'llama2', 'mistral'],
@@ -693,7 +635,6 @@ class RealOllamaManager:
         
         preferred_models = model_priority.get(mode, ['llama2'])
         
-        # Гарантируем, что хотя бы одна модель доступна
         if not self.ensure_model_available('llama2'):
             return None
         
@@ -706,11 +647,9 @@ class RealOllamaManager:
                 if preferred_model in model['name']:
                     return model['name']
         
-        # Возвращаем первую доступную модель
         return models[0]['name']
     
     def create_system_prompt(self, mode):
-        """Создание системного промпта в зависимости от режима"""
         prompts = {
             'normal': "Ты полезный AI ассистент. Отвечай вежливо и информативно на русском языке.",
             'hacker': "Ты опытный хакер и специалист по кибербезопасности. Объясняй сложные концепции простым языком на русском.",
@@ -719,7 +658,6 @@ class RealOllamaManager:
         return prompts.get(mode, prompts['normal'])
     
     def send_request(self, model_name, system_prompt, user_message):
-        """Отправка запроса к Ollama API"""
         try:
             payload = {
                 "model": model_name,
@@ -758,7 +696,6 @@ def chat_interface():
 
 @app.route('/api/models')
 def get_models():
-    """Получение списка доступных моделей"""
     try:
         models = ollama_manager.get_available_models()
         return jsonify({"models": models, "success": True})
@@ -768,7 +705,6 @@ def get_models():
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """Основной endpoint для чата"""
     try:
         data = request.json
         message = data.get('message', '').strip()
@@ -780,9 +716,7 @@ def chat():
                 "message": "Пустое сообщение"
             })
         
-        # Проверяем доступность Ollama
         if not ollama_manager.check_availability():
-            # Пытаемся запустить Ollama
             try:
                 subprocess.run(['docker', 'start', 'ollama'], check=True, timeout=30)
                 time.sleep(5)
@@ -795,7 +729,6 @@ def chat():
                     "message": "Ollama сервис недоступен. Запускаем автоматическую настройку..."
                 })
         
-        # Выбираем модель в зависимости от режима
         model_name = ollama_manager.select_model_for_mode(mode)
         if not model_name:
             return jsonify({
@@ -803,10 +736,8 @@ def chat():
                 "message": "Нет доступных моделей. Загружаем базовую модель..."
             })
         
-        # Создаем промпт
         system_prompt = ollama_manager.create_system_prompt(mode)
         
-        # Отправляем запрос к Ollama
         start_time = time.time()
         response = ollama_manager.send_request(model_name, system_prompt, message)
         response_time = time.time() - start_time
@@ -830,7 +761,6 @@ def chat():
 
 @app.route('/api/pull-model', methods=['POST'])
 def pull_model():
-    """Загрузка модели"""
     try:
         data = request.json
         model_name = data.get('model', 'llama2')
@@ -856,9 +786,7 @@ def pull_model():
 
 @app.route('/api/init-system', methods=['POST'])
 def init_system():
-    """Инициализация системы AI"""
     try:
-        # Гарантируем, что базовая модель доступна
         success = ollama_manager.ensure_model_available('llama2')
         
         if success:
@@ -880,7 +808,6 @@ def init_system():
 
 @app.route('/api/health')
 def health_check():
-    """Проверка здоровья сервиса"""
     ollama_available = ollama_manager.check_availability()
     models = ollama_manager.get_available_models()
     
@@ -893,7 +820,6 @@ def health_check():
     })
 
 if __name__ == '__main__':
-    # Предварительная инициализация при запуске
     logger.info("🚀 Запуск реального AI чата...")
     
     if ollama_manager.check_availability():
@@ -902,7 +828,6 @@ if __name__ == '__main__':
         for model in models:
             logger.info(f"  - {model['name']}")
         
-        # Гарантируем, что базовая модель есть
         ollama_manager.ensure_model_available('llama2')
     else:
         logger.warning("⚠️ Ollama недоступен. Запустите: docker start ollama")
@@ -1042,7 +967,6 @@ cat > "/home/$CURRENT_USER/docker/ai-chat/templates/chat.html" << 'AI_CHAT_HTML'
         </div>
 
         <div id="systemAlert" class="system-alert" style="display: none;">
-            <!-- Системные уведомления -->
         </div>
         
         <div class="mode-selector">
@@ -1080,7 +1004,6 @@ cat > "/home/$CURRENT_USER/docker/ai-chat/templates/chat.html" << 'AI_CHAT_HTML'
     <script>
         let currentMode = 'normal';
         
-        // Загрузка информации о моделях
         async function loadModels() {
             try {
                 const response = await fetch('/api/models');
@@ -1100,7 +1023,6 @@ cat > "/home/$CURRENT_USER/docker/ai-chat/templates/chat.html" << 'AI_CHAT_HTML'
             }
         }
         
-        // Инициализация AI системы
         async function initAISystem() {
             const alertDiv = document.getElementById('systemAlert');
             alertDiv.style.display = 'block';
@@ -1125,7 +1047,7 @@ cat > "/home/$CURRENT_USER/docker/ai-chat/templates/chat.html" << 'AI_CHAT_HTML'
                     alertDiv.style.color = '#721c24';
                 }
                 
-                loadModels(); // Перезагружаем список моделей
+                loadModels();
                 
             } catch (error) {
                 alertDiv.innerHTML = '❌ Ошибка инициализации: ' + error.message;
@@ -1134,7 +1056,6 @@ cat > "/home/$CURRENT_USER/docker/ai-chat/templates/chat.html" << 'AI_CHAT_HTML'
             }
         }
         
-        // Установка модели по умолчанию
         async function pullDefaultModel() {
             const alertDiv = document.getElementById('systemAlert');
             alertDiv.style.display = 'block';
@@ -1166,18 +1087,15 @@ cat > "/home/$CURRENT_USER/docker/ai-chat/templates/chat.html" << 'AI_CHAT_HTML'
             }
         }
         
-        // Отправка сообщения
         async function sendMessage() {
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
             
             if (!message) return;
             
-            // Добавляем сообщение пользователя
             addMessage(message, 'user');
             input.value = '';
             
-            // Показываем индикатор загрузки
             document.getElementById('loadingIndicator').style.display = 'block';
             document.getElementById('errorMessage').style.display = 'none';
             
@@ -1201,7 +1119,6 @@ cat > "/home/$CURRENT_USER/docker/ai-chat/templates/chat.html" << 'AI_CHAT_HTML'
                     document.getElementById('errorMessage').textContent = data.message;
                     document.getElementById('errorMessage').style.display = 'block';
                     
-                    // Предлагаем инициализировать систему при ошибке
                     if (data.message.includes('недоступен') || data.message.includes('моделей')) {
                         const alertDiv = document.getElementById('systemAlert');
                         alertDiv.style.display = 'block';
@@ -1216,7 +1133,6 @@ cat > "/home/$CURRENT_USER/docker/ai-chat/templates/chat.html" << 'AI_CHAT_HTML'
             }
         }
         
-        // Добавление сообщения в чат
         function addMessage(text, sender, model = null, responseTime = null) {
             const chatContainer = document.getElementById('chatContainer');
             const messageDiv = document.createElement('div');
@@ -1232,11 +1148,9 @@ cat > "/home/$CURRENT_USER/docker/ai-chat/templates/chat.html" << 'AI_CHAT_HTML'
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
         
-        // Инициализация
         document.addEventListener('DOMContentLoaded', function() {
             loadModels();
             
-            // Обработчики режимов
             document.querySelectorAll('.mode-btn').forEach(btn => {
                 btn.addEventListener('click', function() {
                     document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
@@ -1245,7 +1159,6 @@ cat > "/home/$CURRENT_USER/docker/ai-chat/templates/chat.html" << 'AI_CHAT_HTML'
                 });
             });
             
-            // Обработчик отправки
             document.getElementById('sendButton').addEventListener('click', sendMessage);
             document.getElementById('messageInput').addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') {
@@ -1253,7 +1166,6 @@ cat > "/home/$CURRENT_USER/docker/ai-chat/templates/chat.html" << 'AI_CHAT_HTML'
                 }
             });
             
-            // Автоматическая инициализация при загрузке
             setTimeout(initAISystem, 1000);
         });
     </script>
@@ -1285,12 +1197,8 @@ EXPOSE 5000
 CMD ["python", "app.py"]
 AI_DOCKERFILE
 
-# ==========================================
-# 9. РЕАЛЬНАЯ СИСТЕМА АВТОМАТИЧЕСКОГО ПОИСКА ФИЛЬМОВ
-# ==========================================
 log "🎬 Создание РЕАЛЬНОЙ системы автоматического поиска фильмов..."
 
-# 9.1 Создание реального поискового бэкенда
 mkdir -p "/home/$CURRENT_USER/docker/search-backend"
 
 cat > "/home/$CURRENT_USER/docker/search-backend/Dockerfile" << 'SEARCH_DOCKERFILE'
@@ -1374,7 +1282,6 @@ class RealTorrentSearchSystem:
         Path('/app/data/playback_status').mkdir(exist_ok=True)
     
     def setup_qbittorrent(self):
-        """Настройка клиента qBittorrent"""
         try:
             client = qbittorrentapi.Client(
                 host='qbittorrent',
@@ -1395,7 +1302,6 @@ class RealTorrentSearcher:
         self.session = aiohttp.ClientSession()
     
     async def search_torrents(self, query, content_type='auto'):
-        """РЕАЛЬНЫЙ поиск торрентов через несколько источников"""
         self.logger.info(f"🔍 РЕАЛЬНЫЙ поиск: {query}")
         
         tasks = [
@@ -1407,20 +1313,17 @@ class RealTorrentSearcher:
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Объединяем и фильтруем результаты
         all_results = []
         for result in results:
             if isinstance(result, list):
                 all_results.extend(result)
         
-        # Фильтруем дубликаты и сортируем по сидам
         unique_results = self.remove_duplicates(all_results)
         unique_results.sort(key=lambda x: x.get('seeds', 0), reverse=True)
         
         return unique_results[:20]
     
     async def search_1337x(self, query):
-        """Поиск на 1337x.to - реальный работающий трекер"""
         try:
             search_url = f"https://1337x.to/search/{urllib.parse.quote(query)}/1/"
             
@@ -1445,7 +1348,6 @@ class RealTorrentSearcher:
             return []
     
     def parse_1337x_results(self, html, query):
-        """Парсинг результатов 1337x"""
         results = []
         soup = BeautifulSoup(html, 'html.parser')
         
@@ -1454,7 +1356,7 @@ class RealTorrentSearcher:
             if not table:
                 return results
             
-            for row in table.find_all('tr')[1:11]:  # Первые 10 результатов
+            for row in table.find_all('tr')[1:11]:
                 try:
                     cells = row.find_all('td')
                     if len(cells) < 2:
@@ -1463,7 +1365,6 @@ class RealTorrentSearcher:
                     name_cell = cells[0]
                     seeds_cell = cells[1]
                     
-                    # Извлекаем название и ссылку
                     name_link = name_cell.find('a', href=re.compile(r'/torrent/'))
                     if not name_link:
                         continue
@@ -1471,14 +1372,12 @@ class RealTorrentSearcher:
                     title = name_link.get_text(strip=True)
                     torrent_url = "https://1337x.to" + name_link['href']
                     
-                    # Извлекаем количество сидов
                     seeds = 0
                     try:
                         seeds = int(seeds_cell.get_text(strip=True))
                     except:
                         pass
                     
-                    # Получаем magnet ссылку из детальной страницы
                     magnet_link = self.get_1337x_magnet(torrent_url)
                     
                     if magnet_link and seeds > 0:
@@ -1501,7 +1400,6 @@ class RealTorrentSearcher:
         return results
     
     def get_1337x_magnet(self, torrent_url):
-        """Получение magnet ссылки с детальной страницы 1337x"""
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -1519,7 +1417,6 @@ class RealTorrentSearcher:
         return None
     
     async def search_yts(self, query):
-        """Поиск на YTS - специализированный трекер для фильмов"""
         try:
             search_url = f"https://yts.mx/api/v2/list_movies.json?query_term={urllib.parse.quote(query)}&sort_by=seeds&order_by=desc"
             
@@ -1535,7 +1432,6 @@ class RealTorrentSearcher:
             return []
     
     def parse_yts_results(self, data, query):
-        """Парсинг результатов YTS"""
         results = []
         
         try:
@@ -1568,7 +1464,6 @@ class RealTorrentSearcher:
         return results
     
     async def search_piratebay(self, query):
-        """Поиск на The Pirate Bay"""
         try:
             search_url = f"https://apibay.org/q.php?q={urllib.parse.quote(query)}"
             
@@ -1584,7 +1479,6 @@ class RealTorrentSearcher:
             return []
     
     def parse_piratebay_results(self, data, query):
-        """Парсинг результатов PirateBay"""
         results = []
         
         try:
@@ -1611,7 +1505,6 @@ class RealTorrentSearcher:
         return results
     
     async def search_torrentgalaxy(self, query):
-        """Поиск на TorrentGalaxy"""
         try:
             search_url = f"https://torrentgalaxy.to/torrents.php?search={urllib.parse.quote(query)}&sort=seeders&order=desc"
             
@@ -1631,7 +1524,6 @@ class RealTorrentSearcher:
             return []
     
     def parse_torrentgalaxy_results(self, html, query):
-        """Парсинг результатов TorrentGalaxy"""
         results = []
         soup = BeautifulSoup(html, 'html.parser')
         
@@ -1648,16 +1540,15 @@ class RealTorrentSearcher:
                     
                     title = title_link.get_text(strip=True)
                     
-                    # Извлекаем сиды
-                    seeds_div = div.find('div', class_='tgxtablecell', string=re.compile(r'\d+'))
                     seeds = 0
-                    if seeds_div:
+                    try:
                         seeds_text = seeds_div.get_text(strip=True)
                         seeds_match = re.search(r'(\d+)', seeds_text)
                         if seeds_match:
                             seeds = int(seeds_match.group(1))
+                    except:
+                        pass
                     
-                    # Получаем magnet ссылку
                     magnet_link = title_div.find('a', href=re.compile(r'^magnet:'))
                     magnet = magnet_link['href'] if magnet_link else None
                     
@@ -1680,7 +1571,6 @@ class RealTorrentSearcher:
         return results
     
     def detect_quality(self, title):
-        """Определение качества из названия"""
         title_lower = title.lower()
         
         quality_patterns = {
@@ -1696,7 +1586,6 @@ class RealTorrentSearcher:
         return 'Unknown'
     
     def extract_size_from_title(self, title):
-        """Извлечение размера из названия"""
         size_pattern = r'(\d+\.\d+|\d+)\s*(GB|MB|ГБ|МБ|GiB|MiB)'
         match = re.search(size_pattern, title, re.IGNORECASE)
         if match:
@@ -1704,7 +1593,6 @@ class RealTorrentSearcher:
         return "1.5 GB"
     
     def format_size(self, size_bytes):
-        """Форматирование размера в байтах"""
         for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
             if size_bytes < 1024.0:
                 return f"{size_bytes:.2f} {unit}"
@@ -1712,7 +1600,6 @@ class RealTorrentSearcher:
         return f"{size_bytes:.2f} PB"
     
     def remove_duplicates(self, results):
-        """Удаление дубликатов по названию и качеству"""
         seen = set()
         unique_results = []
         
@@ -1731,7 +1618,6 @@ class RealDownloadManager:
         self.active_downloads = {}
     
     async def start_download(self, magnet_link, title):
-        """РЕАЛЬНЫЙ запуск загрузки через qBittorrent"""
         try:
             self.logger.info(f"🚀 Начало РЕАЛЬНОЙ загрузки: {title}")
             
@@ -1739,7 +1625,6 @@ class RealDownloadManager:
                 self.logger.error("qBittorrent клиент не инициализирован")
                 return False
             
-            # Добавляем торрент в qBittorrent
             try:
                 download_path = "/downloads"
                 
@@ -1753,7 +1638,6 @@ class RealDownloadManager:
                 
                 self.logger.info(f"✅ Торрент добавлен в qBittorrent: {title}")
                 
-                # Запускаем мониторинг прогресса
                 asyncio.create_task(self.monitor_download_progress(title, magnet_link))
                 return True
                 
@@ -1766,17 +1650,15 @@ class RealDownloadManager:
             return False
     
     async def monitor_download_progress(self, title, magnet_link):
-        """Мониторинг прогресса загрузки"""
         try:
             self.logger.info(f"📊 Начало мониторинга загрузки: {title}")
             
             playback_notified = False
-            max_attempts = 600  # 100 минут ожидания
+            max_attempts = 600
             attempt = 0
             
             while attempt < max_attempts:
                 try:
-                    # Ищем торрент в списке
                     torrents = self.qbittorrent_client.torrents_info()
                     torrent = None
                     
@@ -1789,20 +1671,18 @@ class RealDownloadManager:
                         progress = torrent.progress * 100
                         self.logger.info(f"Прогресс '{title}': {progress:.1f}%")
                         
-                        # Уведомляем о готовности к просмотру при 15%
                         if progress >= 15.0 and not playback_notified:
                             playback_notified = True
                             self.logger.info(f"🎬 Контент готов к просмотру: {title} (15%)")
                             await self.notify_playback_ready(title, torrent)
                         
-                        # Если загрузка завершена
                         if progress >= 100.0:
                             self.logger.info(f"✅ Загрузка завершена: {title}")
                             await self.process_completed_download(torrent)
                             break
                     
                     attempt += 1
-                    await asyncio.sleep(10)  # Проверяем каждые 10 секунд
+                    await asyncio.sleep(10)
                     
                 except Exception as e:
                     self.logger.error(f"Ошибка мониторинга {title}: {e}")
@@ -1815,9 +1695,7 @@ class RealDownloadManager:
             self.logger.error(f"Критическая ошибка мониторинга {title}: {e}")
     
     async def notify_playback_ready(self, title, torrent):
-        """Уведомление о готовности к просмотру"""
         try:
-            # Создаем файл-маркер готовности
             status_data = {
                 'title': title,
                 'status': 'ready_for_playback',
@@ -1838,20 +1716,16 @@ class RealDownloadManager:
             self.logger.error(f"Ошибка уведомления о готовности: {e}")
     
     async def process_completed_download(self, torrent):
-        """Обработка завершенной загрузки"""
         try:
             self.logger.info(f"🔄 Обработка завершенной загрузки: {torrent.name}")
             
-            # Определяем тип контента
             content_type = self.determine_content_type(torrent.name)
             
-            # Перемещаем в соответствующую папку
             destination_path = await self.move_to_library(torrent.content_path, content_type, torrent.name)
             
             if destination_path:
                 self.logger.info(f"✅ Контент перемещен в библиотеку: {destination_path}")
                 
-                # Обновляем статус
                 status_data = {
                     'title': torrent.name,
                     'status': 'completed',
@@ -1864,14 +1738,12 @@ class RealDownloadManager:
                 with open(status_file, 'w', encoding='utf-8') as f:
                     json.dump(status_data, f, ensure_ascii=False, indent=2)
                     
-                # Запускаем сканирование библиотеки Jellyfin
                 await self.trigger_jellyfin_scan()
                     
         except Exception as e:
             self.logger.error(f"❌ Ошибка обработки завершенной загрузки: {e}")
     
     def determine_content_type(self, title):
-        """Определение типа контента по названию"""
         title_lower = title.lower()
         
         if any(term in title_lower for term in ['season', 'сезон', 's01', 's02', 'серии', 'episode']):
@@ -1879,26 +1751,22 @@ class RealDownloadManager:
         elif any(term in title_lower for term in ['movie', 'фильм', 'кино']):
             return 'movie'
         else:
-            return 'movie'  # По умолчанию считаем фильмом
+            return 'movie'
     
     async def move_to_library(self, source_path, content_type, title):
-        """Перемещение контента в библиотеку"""
         try:
             if content_type == 'movie':
                 dest_dir = "/media/movies"
-            else:  # tv
+            else:
                 dest_dir = "/media/tv"
             
-            # Создаем безопасное имя файла/папки
             safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_', '.')).rstrip()
             
             if os.path.isdir(source_path):
-                # Если это папка, перемещаем всю папку
                 dest_path = os.path.join(dest_dir, safe_title)
                 shutil.move(source_path, dest_path)
                 return dest_path
             else:
-                # Если это файл, перемещаем файл
                 file_ext = os.path.splitext(source_path)[1]
                 dest_path = os.path.join(dest_dir, f"{safe_title}{file_ext}")
                 shutil.move(source_path, dest_path)
@@ -1909,19 +1777,16 @@ class RealDownloadManager:
             return None
     
     async def trigger_jellyfin_scan(self):
-        """Запуск сканирования библиотеки Jellyfin"""
         try:
             jellyfin_url = "http://jellyfin:8096"
             api_key = os.getenv('JELLYFIN_API_KEY', '')
             
             if api_key:
-                # Вызываем API Jellyfin для сканирования библиотеки
                 scan_url = f"{jellyfin_url}/Library/Refresh"
                 headers = {'X-MediaBrowser-Token': api_key}
                 requests.post(scan_url, headers=headers, timeout=10)
                 self.logger.info("✅ Запущено сканирование библиотеки Jellyfin")
             else:
-                # Jellyfin автоматически сканирует папки
                 self.logger.info("📁 Jellyfin автоматически обнаружит новые файлы")
                 
             return True
@@ -1929,14 +1794,12 @@ class RealDownloadManager:
             self.logger.error(f"Ошибка сканирования Jellyfin: {e}")
             return False
 
-# Инициализация реальной системы
 search_system = RealTorrentSearchSystem()
 torrent_searcher = RealTorrentSearcher()
 download_manager = RealDownloadManager(search_system.qbittorrent_client)
 
 @app.route('/api/search', methods=['POST'])
 async def search_torrents():
-    """API для РЕАЛЬНОГО поиска торрентов"""
     try:
         data = request.get_json()
         query = data.get('query', '').strip()
@@ -1947,7 +1810,6 @@ async def search_torrents():
         
         app.logger.info(f"🔍 РЕАЛЬНЫЙ поисковый запрос: '{query}'")
         
-        # Выполняем реальный поиск
         results = await torrent_searcher.search_torrents(query, content_type)
         
         app.logger.info(f"✅ Найдено результатов: {len(results)}")
@@ -1965,7 +1827,6 @@ async def search_torrents():
 
 @app.route('/api/download', methods=['POST'])
 async def start_download():
-    """API для начала РЕАЛЬНОЙ загрузки"""
     try:
         data = request.get_json()
         magnet_link = data.get('magnet', '')
@@ -1976,7 +1837,6 @@ async def start_download():
         
         app.logger.info(f"🚀 Запрос на РЕАЛЬНУЮ загрузку: {title}")
         
-        # Запускаем реальную загрузку
         download_success = await download_manager.start_download(magnet_link, title)
         
         if download_success:
@@ -1994,7 +1854,6 @@ async def start_download():
 
 @app.route('/api/downloads/active', methods=['GET'])
 def active_downloads():
-    """Активные загрузки"""
     try:
         if not search_system.qbittorrent_client:
             return jsonify({'success': False, 'error': 'qBittorrent недоступен'})
@@ -2024,7 +1883,6 @@ def active_downloads():
 
 @app.route('/api/system/health', methods=['GET'])
 def system_health():
-    """Проверка здоровья системы"""
     qbittorrent_healthy = search_system.qbittorrent_client is not None
     
     return jsonify({
@@ -2039,7 +1897,6 @@ def system_health():
     })
 
 def format_speed(self, speed_bytes):
-    """Форматирование скорости"""
     if speed_bytes == 0:
         return "0 B/s"
     
@@ -2050,7 +1907,6 @@ def format_speed(self, speed_bytes):
     return f"{speed_bytes:.1f} TB/s"
 
 def format_eta(self, seconds):
-    """Форматирование ETA"""
     if seconds < 0:
         return "Unknown"
     
@@ -2075,12 +1931,10 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
 SEARCH_APP_EOF
 
-# 9.2 Создание docker-compose для реальной медиасистемы
 cat > "/home/$CURRENT_USER/docker/docker-compose.media.yml" << 'MEDIA_COMPOSE_EOF'
 version: '3.8'
 
 services:
-  # Jellyfin - медиасервер
   jellyfin:
     image: jellyfin/jellyfin:latest
     container_name: jellyfin
@@ -2098,7 +1952,6 @@ services:
     networks:
       - media-network
 
-  # qBittorrent - торрент-клиент
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
@@ -2118,7 +1971,6 @@ services:
     networks:
       - media-network
 
-  # Реальный бэкенд для поиска
   search-backend:
     build: ./search-backend
     container_name: search-backend
@@ -2145,9 +1997,6 @@ networks:
     driver: bridge
 MEDIA_COMPOSE_EOF
 
-# ==========================================
-# 10. СОЗДАНИЕ РЕАЛЬНОЙ ГЛАВНОЙ СТРАНИЦЫ
-# ==========================================
 log "🌐 Создание реальной главной страницы..."
 
 cat > "/home/$CURRENT_USER/scripts/generate-real-dashboard.sh" << 'DASHBOARD_EOF'
@@ -2156,7 +2005,6 @@ cat > "/home/$CURRENT_USER/scripts/generate-real-dashboard.sh" << 'DASHBOARD_EOF
 CURRENT_USER=$(whoami)
 source "/home/$CURRENT_USER/.config/server_env"
 
-# Создаем реальную главную страницу
 cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
 <!DOCTYPE html>
 <html lang="ru">
@@ -2505,10 +2353,8 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
     <script>
         let currentResults = [];
         
-        // Проверка статуса сервисов
         async function checkServicesStatus() {
             try {
-                // Проверка поиска API
                 const searchResponse = await fetch('http://$SERVER_IP:5000/api/system/health');
                 if (searchResponse.ok) {
                     document.getElementById('searchStatus').textContent = '✅ Онлайн';
@@ -2520,7 +2366,6 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
             }
             
             try {
-                // Проверка Jellyfin
                 const jellyfinResponse = await fetch('http://$SERVER_IP:8096/health/ready');
                 if (jellyfinResponse.ok) {
                     document.getElementById('jellyfinStatus').textContent = '✅ Онлайн';
@@ -2531,7 +2376,6 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
                 document.getElementById('jellyfinStatus').textContent = '❌ Офлайн';
             }
             
-            // qBittorrent считается онлайн если поиск работает
             document.getElementById('qbStatus').textContent = '✅ Онлайн';
         }
         
@@ -2548,7 +2392,6 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
             const resultsSection = document.getElementById('resultsSection');
             const resultsList = document.getElementById('resultsList');
             
-            // Показываем загрузку
             loading.style.display = 'block';
             resultsSection.style.display = 'none';
             resultsList.innerHTML = '';
@@ -2618,7 +2461,6 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
             const downloadDetails = document.getElementById('downloadDetails');
             const title = currentResults[resultIndex].title;
             
-            // Показываем прогресс
             progressSection.style.display = 'block';
             progressFill.style.width = '5%';
             downloadDetails.innerHTML = \`<p>Начало загрузки: <strong>\${title}</strong></p>\`;
@@ -2640,7 +2482,6 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
                 if (data.success) {
                     downloadDetails.innerHTML += '<p style="color: #4CAF50;">✅ Загрузка началась! Мониторим прогресс...</p>';
                     
-                    // Запускаем мониторинг реального прогресса
                     monitorRealProgress(title);
                     
                 } else {
@@ -2657,7 +2498,6 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
             const downloadDetails = document.getElementById('downloadDetails');
             const progressFill = document.getElementById('progressFill');
             
-            // Мониторим реальный прогресс
             const progressInterval = setInterval(async () => {
                 try {
                     const response = await fetch('http://$SERVER_IP:5000/api/downloads/active');
@@ -2688,19 +2528,16 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
             }, 3000);
         }
         
-        // Обработка Enter в поле поиска
         document.getElementById('searchInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 performRealSearch();
             }
         });
         
-        // Инициализация
         document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('searchInput').focus();
             checkServicesStatus();
             
-            // Показываем информацию о реальной системе
             console.log('🚀 ПОЛНОСТЬЮ РАБОЧАЯ система автоматического поиска фильмов готова!');
             console.log('🔍 Реальный поиск по: 1337x, YTS, The Pirate Bay, TorrentGalaxy');
             console.log('📥 Реальная загрузка через qBittorrent');
@@ -2724,9 +2561,6 @@ DASHBOARD_EOF
 chmod +x "/home/$CURRENT_USER/scripts/generate-real-dashboard.sh"
 "/home/$CURRENT_USER/scripts/generate-real-dashboard.sh"
 
-# ==========================================
-# 11. СОЗДАНИЕ AI КАМПУСА
-# ==========================================
 log "🎓 Создание реального AI Кампуса..."
 
 mkdir -p "/home/$CURRENT_USER/docker/ai-campus"
@@ -2744,11 +2578,9 @@ app = Flask(__name__)
 
 OLLAMA_URL = "http://ollama:11434"
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# База знаний по разным предметам
 KNOWLEDGE_BASE = {
     "programming": {
         "name": "Программирование",
@@ -2777,7 +2609,6 @@ class RealEducationalAI:
         self.base_url = base_url
     
     def check_availability(self):
-        """Проверка доступности Ollama"""
         try:
             response = requests.get(f"{self.base_url}/api/tags", timeout=10)
             return response.status_code == 200
@@ -2785,7 +2616,6 @@ class RealEducationalAI:
             return False
     
     def get_available_models(self):
-        """Получение доступных моделей"""
         try:
             response = requests.get(f"{self.base_url}/api/tags", timeout=30)
             if response.status_code == 200:
@@ -2796,7 +2626,6 @@ class RealEducationalAI:
             return []
     
     def ensure_model_available(self, model_name="llama2"):
-        """Гарантирует, что модель доступна"""
         try:
             models = self.get_available_models()
             model_exists = any(model_name in model['name'] for model in models)
@@ -2810,7 +2639,6 @@ class RealEducationalAI:
             return False
     
     def pull_model(self, model_name):
-        """Загрузка модели Ollama"""
         try:
             logger.info(f"Начинаем загрузку модели {model_name}...")
             
@@ -2821,7 +2649,6 @@ class RealEducationalAI:
                 universal_newlines=True
             )
             
-            # Читаем вывод в реальном времени
             while True:
                 output = process.stdout.readline()
                 if output == '' and process.poll() is not None:
@@ -2836,9 +2663,7 @@ class RealEducationalAI:
             return False
     
     def teach_topic(self, subject, topic, question, user_message):
-        """Обучение теме с использованием реального AI"""
         try:
-            # Гарантируем, что модель доступна
             if not self.ensure_model_available('llama2'):
                 return {
                     "success": False,
@@ -2852,9 +2677,8 @@ class RealEducationalAI:
                     "message": "Нет доступных AI моделей"
                 }
             
-            model_name = models[0]['name']  # Используем первую доступную модель
+            model_name = models[0]['name']
             
-            # Создаем образовательный промпт
             system_prompt = f"""Ты опытный преподаватель {KNOWLEDGE_BASE[subject]['name']}. 
             Тема урока: {topic}
             
@@ -2912,7 +2736,6 @@ def get_subjects():
 
 @app.route('/api/learn', methods=['POST'])
 def learn_topic():
-    """Обучение выбранной теме"""
     try:
         data = request.json
         subject = data.get('subject', '')
@@ -2958,7 +2781,6 @@ def learn_topic():
 
 @app.route('/api/init-system', methods=['POST'])
 def init_system():
-    """Инициализация образовательной системы"""
     try:
         success = real_educational_ai.ensure_model_available('llama2')
         
@@ -2981,7 +2803,6 @@ def init_system():
 
 @app.route('/api/health')
 def health_check():
-    """Проверка здоровья"""
     ai_available = real_educational_ai.check_availability()
     models = real_educational_ai.get_available_models()
     
@@ -2994,14 +2815,12 @@ def health_check():
     })
 
 if __name__ == '__main__':
-    # Предварительная инициализация при запуске
     logger.info("🎓 Запуск реального AI Кампуса...")
     
     if real_educational_ai.check_availability():
         models = real_educational_ai.get_available_models()
         logger.info(f"✅ Ollama доступен. Моделей: {len(models)}")
         
-        # Гарантируем, что базовая модель есть
         real_educational_ai.ensure_model_available('llama2')
     else:
         logger.warning("⚠️ Ollama недоступен. Запустите: docker start ollama")
@@ -3136,14 +2955,12 @@ cat > "/home/$CURRENT_USER/docker/ai-campus/templates/campus.html" << 'CAMPUS_HT
         </div>
 
         <div id="systemAlert" class="system-alert" style="display: none;">
-            <!-- Системные уведомления -->
         </div>
         
         <div class="main-content">
             <div class="card">
                 <h3>📚 Предметы</h3>
                 <div class="subject-list" id="subjectList">
-                    <!-- Subjects will be loaded here -->
                 </div>
             </div>
             
@@ -3161,7 +2978,6 @@ cat > "/home/$CURRENT_USER/docker/ai-campus/templates/campus.html" << 'CAMPUS_HT
                     <h3 id="currentSubject">Программирование</h3>
                     <p class="info-text">Выберите тему для изучения:</p>
                     <div class="topic-list" id="topicList">
-                        <!-- Topics will be loaded here -->
                     </div>
                     
                     <div style="margin: 20px 0;">
@@ -3182,7 +2998,6 @@ cat > "/home/$CURRENT_USER/docker/ai-campus/templates/campus.html" << 'CAMPUS_HT
         let currentSubject = '';
         let currentTopic = '';
         
-        // Загрузка предметов
         async function loadSubjects() {
             try {
                 const response = await fetch('/api/subjects');
@@ -3203,7 +3018,6 @@ cat > "/home/$CURRENT_USER/docker/ai-campus/templates/campus.html" << 'CAMPUS_HT
             }
         }
         
-        // Инициализация AI системы
         async function initAISystem() {
             const alertDiv = document.getElementById('systemAlert');
             alertDiv.style.display = 'block';
@@ -3235,11 +3049,9 @@ cat > "/home/$CURRENT_USER/docker/ai-campus/templates/campus.html" << 'CAMPUS_HT
             }
         }
         
-        // Выбор предмета
         function selectSubject(subjectKey, subject) {
             currentSubject = subjectKey;
             
-            // Update UI
             document.querySelectorAll('.subject-item').forEach(item => {
                 item.classList.remove('active');
             });
@@ -3249,7 +3061,6 @@ cat > "/home/$CURRENT_USER/docker/ai-campus/templates/campus.html" << 'CAMPUS_HT
             document.getElementById('learningInterface').style.display = 'block';
             document.getElementById('currentSubject').textContent = subject.name;
             
-            // Load topics
             const topicList = document.getElementById('topicList');
             topicList.innerHTML = '';
             
@@ -3264,13 +3075,11 @@ cat > "/home/$CURRENT_USER/docker/ai-campus/templates/campus.html" << 'CAMPUS_HT
             document.getElementById('responseArea').textContent = 'Выберите тему и задайте вопрос...';
         }
         
-        // Выбор темы
         function selectTopic(topic) {
             currentTopic = topic;
             document.getElementById('responseArea').textContent = \`Готов к вопросам по теме: \${topic}\`;
         }
         
-        // Задать вопрос
         async function askQuestion() {
             const question = document.getElementById('questionInput').value.trim();
             
@@ -3300,7 +3109,6 @@ cat > "/home/$CURRENT_USER/docker/ai-campus/templates/campus.html" << 'CAMPUS_HT
                 } else {
                     document.getElementById('responseArea').textContent = 'Ошибка: ' + data.message;
                     
-                    // Предлагаем инициализировать систему при ошибке
                     if (data.message.includes('недоступен')) {
                         const alertDiv = document.getElementById('systemAlert');
                         alertDiv.style.display = 'block';
@@ -3313,11 +3121,9 @@ cat > "/home/$CURRENT_USER/docker/ai-campus/templates/campus.html" << 'CAMPUS_HT
             }
         }
         
-        // Инициализация
         document.addEventListener('DOMContentLoaded', function() {
             loadSubjects();
             
-            // Автоматическая инициализация при загрузке
             setTimeout(initAISystem, 1000);
         });
     </script>
@@ -3349,16 +3155,12 @@ EXPOSE 5002
 CMD ["python", "app.py"]
 CAMPUS_DOCKERFILE
 
-# ==========================================
-# 12. СОЗДАНИЕ ОСНОВНОГО DOCKER-COMPOSE
-# ==========================================
 log "🐳 Создание основного docker-compose..."
 
 cat > "/home/$CURRENT_USER/docker/docker-compose.yml" << 'MAIN_COMPOSE_EOF'
 version: '3.8'
 
 services:
-  # Основной прокси и статика
   nginx:
     image: nginx:alpine
     container_name: nginx
@@ -3371,7 +3173,6 @@ services:
     networks:
       - main-network
 
-  # Реальные AI сервисы
   ai-chat:
     build: ./ai-chat
     container_name: ai-chat
@@ -3390,7 +3191,6 @@ services:
     networks:
       - main-network
 
-  # Реальная AI модель
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -3409,7 +3209,6 @@ networks:
     driver: bridge
 MAIN_COMPOSE_EOF
 
-# Создаем конфигурацию Nginx
 cat > "/home/$CURRENT_USER/docker/nginx.conf" << 'NGINX_CONF_EOF'
 events {
     worker_connections 1024;
@@ -3422,16 +3221,13 @@ http {
     sendfile on;
     keepalive_timeout 65;
     
-    # Логирование
     access_log /var/log/nginx/access.log;
     error_log /var/log/nginx/error.log;
 
-    # Основной сервер
     server {
         listen 80;
         server_name _;
         
-        # Статические файлы
         root /usr/share/nginx/html;
         index index.html;
 
@@ -3439,7 +3235,6 @@ http {
             try_files $uri $uri/ =404;
         }
 
-        # Прокси для реальных AI сервисов
         location /ai-chat/ {
             proxy_pass http://ai-chat:5000/;
             proxy_set_header Host $host;
@@ -3456,7 +3251,6 @@ http {
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        # Прокси для Jellyfin
         location /jellyfin/ {
             proxy_pass http://jellyfin:8096/;
             proxy_set_header Host $host;
@@ -3468,31 +3262,22 @@ http {
 }
 NGINX_CONF_EOF
 
-# ==========================================
-# 13. ЗАПУСК РЕАЛЬНОЙ СИСТЕМЫ
-# ==========================================
 log "🚀 Запуск реальной системы..."
 
 cd "/home/$CURRENT_USER/docker"
 
-# Собираем и запускаем основные сервисы
 log "🐳 Запуск основных сервисов..."
 docker-compose up -d --build
 
-# Запускаем медиасистему
 log "🎬 Запуск реальной системы автоматического поиска фильмов..."
 docker-compose -f docker-compose.media.yml up -d --build
 
 sleep 30
 
-# Проверяем статус
 log "📊 Проверка статуса реальных сервисов..."
 docker-compose ps
 docker-compose -f docker-compose.media.yml ps
 
-# ==========================================
-# 14. СОЗДАНИЕ СКРИПТОВ УПРАВЛЕНИЯ
-# ==========================================
 log "🔧 Создание скриптов управления..."
 
 cat > "/home/$CURRENT_USER/scripts/real-server-manager.sh" << 'MANAGER_SCRIPT'
@@ -3575,7 +3360,6 @@ MANAGER_SCRIPT
 
 chmod +x "/home/$CURRENT_USER/scripts/real-server-manager.sh"
 
-# Создаем скрипт автоматической инициализации AI
 cat > "/home/$CURRENT_USER/scripts/init-ai-system.sh" << 'AI_INIT_SCRIPT'
 #!/bin/bash
 
@@ -3585,11 +3369,9 @@ log() {
 
 log "🤖 Запуск автоматической инициализации РЕАЛЬНОЙ AI системы..."
 
-# Ждем запуск Ollama
 log "⏳ Ожидание запуска Ollama..."
 sleep 30
 
-# Инициализируем AI системы
 log "🔧 Инициализация AI чата..."
 curl -X POST http://localhost:5000/api/init-system -H "Content-Type: application/json" -d '{}'
 
@@ -3601,7 +3383,6 @@ docker exec -d ollama sh -c '
     echo "🚀 Начинаем загрузку AI моделей в фоне..."
     sleep 10
     
-    # Загружаем базовые модели
     models=("llama2" "mistral")
     
     for model in "${models[@]}"; do
@@ -3624,15 +3405,10 @@ AI_INIT_SCRIPT
 
 chmod +x "/home/$CURRENT_USER/scripts/init-ai-system.sh"
 
-# Запускаем инициализацию AI в фоне
 "/home/$CURRENT_USER/scripts/init-ai-system.sh" &
 
-# ==========================================
-# 15. ФИНАЛЬНАЯ НАСТРОЙКА И ПРОВЕРКА
-# ==========================================
 log "🎯 Финальная настройка и проверка..."
 
-# Создаем скрипт мониторинга
 cat > "/home/$CURRENT_USER/scripts/real-system-monitor.sh" << 'MONITOR_SCRIPT'
 #!/bin/bash
 
@@ -3641,24 +3417,20 @@ source "/home/$(whoami)/.config/server_env"
 echo "🔍 РЕАЛЬНЫЙ МОНИТОРИНГ СИСТЕМЫ"
 echo "================================"
 
-# Проверка Docker сервисов
 echo ""
 echo "🐳 DOCKER СЕРВИСЫ:"
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
-# Проверка дискового пространства
 echo ""
 echo "💾 ДИСКОВОЕ ПРОСТРАНСТВО:"
 df -h / /home /media
 
-# Проверка сети
 echo ""
 echo "🌐 СЕТЕВЫЕ СОЕДИНЕНИЯ:"
 echo "Домен: $DOMAIN.duckdns.org"
 echo "IP: $SERVER_IP"
 echo "Внешний IP: $(curl -s http://checkip.amazonaws.com)"
 
-# Проверка реальных сервисов
 echo ""
 echo "🔄 ПРОВЕРКА РЕАЛЬНЫХ СЕРВИСОВ:"
 
@@ -3676,7 +3448,6 @@ for service in "${services[@]}"; do
     fi
 done
 
-# Проверка активных загрузок
 echo ""
 echo "📥 АКТИВНЫЕ РЕАЛЬНЫЕ ЗАГРУЗКИ:"
 curl -s http://localhost:5000/api/downloads/active | python3 -m json.tool 2>/dev/null || echo "Не удалось получить информацию о загрузках"
@@ -3691,7 +3462,6 @@ MONITOR_SCRIPT
 
 chmod +x "/home/$CURRENT_USER/scripts/real-system-monitor.sh"
 
-# Финальная проверка
 log "🔍 Финальная проверка системы..."
 "/home/$CURRENT_USER/scripts/real-system-monitor.sh"
 
@@ -3703,13 +3473,6 @@ echo ""
 echo "🌐 РЕАЛЬНЫЕ ОСНОВНЫЕ АДРЕСА:"
 echo "   🔗 Главная страница: http://$DOMAIN.duckdns.org"
 echo "   🔗 Прямой IP: http://$SERVER_IP"
-echo ""
-echo "🎬 РЕАЛЬНАЯ СИСТЕМА АВТОМАТИЧЕСКОГО ПОИСКА ФИЛЬМОВ:"
-echo "   1. Откройте http://$DOMAIN.duckdns.org"
-echo "   2. Введите название фильма в поисковую строку"
-echo "   3. Нажмите 'Найти РЕАЛЬНЫЕ раздачи'"
-echo "   4. Выберите нужный вариант и нажмите 'Скачать'"
-echo "   5. При 15% загрузки фильм появится в Jellyfin!"
 echo ""
 echo "🚀 РЕАЛЬНЫЕ ДОСТУПНЫЕ СЕРВИСЫ:"
 echo "   🎬 Jellyfin: http://$DOMAIN.duckdns.org/jellyfin"
@@ -3730,16 +3493,6 @@ echo "   📊 Мониторинг: /home/$CURRENT_USER/scripts/real-system-moni
 echo "   📝 Логи установки: /home/$CURRENT_USER/install.log"
 echo "   🔄 DuckDNS: /home/$CURRENT_USER/scripts/duckdns-update.sh"
 echo "   🔐 VPN конфиг: /home/$CURRENT_USER/vpn/client.conf"
-echo ""
-echo "🎯 РЕАЛЬНЫЕ ОСОБЕННОСТИ СИСТЕМЫ:"
-echo "   ✅ Реальный поиск по работающим трекерам (1337x, YTS, PirateBay, TorrentGalaxy)"
-echo "   ✅ РЕАЛЬНЫЕ magnet-ссылки и загрузки"
-echo "   ✅ Просмотр при 15% загрузки"
-echo "   ✅ Файл докачивается во время просмотра"
-echo "   ✅ Реальная загрузка через qBittorrent"
-echo "   ✅ Автоматическое перемещение в библиотеку"
-echo "   ✅ РЕАЛЬНЫЙ AI ассистент на базе Ollama"
-echo "   ✅ РЕАЛЬНЫЙ образовательный AI кампус"
 echo ""
 echo "⚠️  РЕАЛЬНЫЕ ВАЖНЫЕ ЗАМЕЧАНИЯ:"
 echo "   1. Первый запуск может занять несколько минут"
