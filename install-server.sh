@@ -86,7 +86,7 @@ check_disk_space() {
 
 # Функция проверки портов
 check_ports() {
-    local ports=(80 8096 11435 5000 7860 8080 3001 51820 5001 11434 5002)
+    local ports=(80 8096 11435 5000 7860 8080 3001 51820 5001 11434 5002 9000 8081)
     local conflict_found=0
     local port process_info
     
@@ -418,8 +418,8 @@ sudo chmod 755 "/home/$CURRENT_USER/docker"
 sudo chmod 755 "/home/$CURRENT_USER/data"
 sudo chmod 755 "/home/$CURRENT_USER/media"
 
-# 7. СИСТЕМА ЕДИНОЙ АВТОРИЗАЦИИ
-log "🔐 Настройка системы авторизации..."
+# 7. СИСТЕМА ЕДИНОЙ АВТОРИЗАЦИИ С АКТИВНОСТЬЮ ПОЛЬЗОВАТЕЛЕЙ
+log "🔐 Настройка системы авторизации с отслеживанием активности..."
 
 cat > "/home/$CURRENT_USER/data/users/users.json" << 'USERS_EOF'
 {
@@ -451,7 +451,8 @@ cat > "/home/$CURRENT_USER/data/users/users.json" << 'USERS_EOF'
   ],
   "sessions": {},
   "login_attempts": {},
-  "blocked_ips": []
+  "blocked_ips": [],
+  "user_activity": []
 }
 USERS_EOF
 
@@ -470,7 +471,7 @@ AUDIT_EOF
 chmod 600 "/home/$CURRENT_USER/data/users/users.json"
 chmod 644 "/home/$CURRENT_USER/data/logs/audit.log"
 
-# 8. ГЛАВНАЯ СТРАНИЦА С АВТОМАТИЧЕСКИМИ ВИДЖЕТАМИ
+# 8. ГЛАВНАЯ СТРАНИЦА С АВТОМАТИЧЕСКИМИ ВИДЖЕТАМИ (БЕЗ STABLE DIFFUSION)
 log "🌐 Создание главной страницы с автоматическими виджетами..."
 
 # Создаем скрипт для генерации главной страницы с виджетами
@@ -480,12 +481,11 @@ cat > "/home/$CURRENT_USER/scripts/generate-dashboard.sh" << 'DASHBOARD_EOF'
 CURRENT_USER=$(whoami)
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
-# Определяем доступные сервисы
+# Определяем доступные сервисы (БЕЗ STABLE DIFFUSION)
 SERVICES=(
     "jellyfin:🎬:Jellyfin:Медиасервер с фильмами:/jellyfin"
     "ai-chat:🤖:AI Ассистент:ChatGPT без ограничений:/ai-chat" 
     "ai-campus:🎓:AI Кампус:Для учебы:/ai-campus"
-    "ai-images:🎨:Генератор изображений:Stable Diffusion:/ai-images"
     "nextcloud:☁️:Nextcloud:Файловое хранилище:/nextcloud"
     "admin-panel:🛠️:Админ-панель:Управление системой:/admin-panel"
     "monitoring:📊:Мониторинг:Uptime Kuma:/monitoring"
@@ -766,7 +766,7 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
         </div>
 
         <div class="version-info">
-            <span>Версия 4.0 | Автоматические виджеты | Сервер: $SERVER_IP | </span>
+            <span>Версия 5.0 | Автоматические виджеты | Сервер: $SERVER_IP | </span>
             <span class="version-link" id="versionLink">О системе</span>
         </div>
     </div>
@@ -908,7 +908,7 @@ $(echo -e "$SERVICES_JS")
 </html>
 HTML_EOF
 
-echo "✅ Главная страница с автоматическими виджетами создана!"
+echo "✅ Главная страница с автоматическими виджетами создана (без Stable Diffusion)!"
 DASHBOARD_EOF
 
 chmod +x "/home/$CURRENT_USER/scripts/generate-dashboard.sh"
@@ -1143,8 +1143,8 @@ VPN_HTML_GEN
 chmod +x "/home/$CURRENT_USER/scripts/generate-vpn-html.sh"
 "/home/$CURRENT_USER/scripts/generate-vpn-html.sh"
 
-# 10. БЭКЕНД СЕРВЕР АВТОРИЗАЦИИ
-log "🔧 Настройка бэкенда авторизации..."
+# 10. БЭКЕНД СЕРВЕР АВТОРИЗАЦИИ С ОТСЛЕЖИВАНИЕМ АКТИВНОСТИ
+log "🔧 Настройка бэкенда авторизации с отслеживанием активности..."
 
 cat > "/home/$CURRENT_USER/docker/auth-server/requirements.txt" << 'REQUIREMENTS_EOF'
 Flask==2.3.3
@@ -1172,7 +1172,7 @@ def load_users():
         with open(USERS_FILE, 'r') as f:
             return json.load(f)
     except:
-        return {"users": [], "sessions": {}, "login_attempts": {}, "blocked_ips": []}
+        return {"users": [], "sessions": {}, "login_attempts": {}, "blocked_ips": [], "user_activity": []}
 
 def save_users(data):
     with open(USERS_FILE, 'w') as f:
@@ -1195,6 +1195,26 @@ def log_action(username, action, details, ip):
     
     with open(LOGS_FILE, 'w') as f:
         json.dump(logs, f, indent=2)
+
+def log_user_activity(username, action, service=None, duration=None):
+    users_data = load_users()
+    
+    activity_entry = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        "username": username,
+        "action": action,
+        "service": service,
+        "duration": duration,
+        "ip": request.remote_addr
+    }
+    
+    users_data['user_activity'].append(activity_entry)
+    
+    # Сохраняем только последние 1000 записей активности
+    if len(users_data['user_activity']) > 1000:
+        users_data['user_activity'] = users_data['user_activity'][-1000:]
+    
+    save_users(users_data)
 
 def token_required(f):
     @wraps(f)
@@ -1250,6 +1270,7 @@ def login():
         }, app.config['SECRET_KEY'])
         
         log_action(username, "login_success", "Успешный вход в систему", ip)
+        log_user_activity(username, "login")
         save_users(users_data)
         
         return jsonify({
@@ -1297,12 +1318,38 @@ def check_vpn_status():
 def get_stats(current_user):
     users_data = load_users()
     
+    # Статистика активности
+    today = datetime.datetime.now().date()
+    today_activity = [a for a in users_data.get('user_activity', []) 
+                     if datetime.datetime.fromisoformat(a['timestamp']).date() == today]
+    
     return jsonify({
         "totalUsers": len(users_data['users']),
         "activeServices": 8,
         "blockedAttempts": len(users_data.get('blocked_ips', [])),
-        "activeSessions": len(users_data.get('sessions', {}))
+        "activeSessions": len(users_data.get('sessions', {})),
+        "todayLogins": len([a for a in today_activity if a['action'] == 'login']),
+        "totalActivity": len(users_data.get('user_activity', []))
     })
+
+@app.route('/api/admin/activity', methods=['GET'])
+@token_required
+@admin_required
+def get_user_activity(current_user):
+    users_data = load_users()
+    
+    # Возвращаем последние 100 записей активности
+    activity = users_data.get('user_activity', [])[-100:]
+    
+    # Добавляем информацию о пользователях
+    for entry in activity:
+        user = next((u for u in users_data['users'] if u['username'] == entry['username']), None)
+        if user:
+            entry['user_prefix'] = user.get('prefix', 'User')
+        else:
+            entry['user_prefix'] = 'Unknown'
+    
+    return jsonify(activity)
 
 @app.route('/api/admin/users', methods=['GET'])
 @token_required
@@ -1314,6 +1361,13 @@ def get_users(current_user):
     for user in users_data['users']:
         user_copy = user.copy()
         user_copy.pop('password', None)
+        
+        # Добавляем статистику активности
+        user_activity = [a for a in users_data.get('user_activity', []) 
+                        if a['username'] == user['username']]
+        user_copy['login_count'] = len([a for a in user_activity if a['action'] == 'login'])
+        user_copy['last_activity'] = user_activity[-1]['timestamp'] if user_activity else None
+        
         users_without_passwords.append(user_copy)
     
     return jsonify(users_without_passwords)
@@ -1348,6 +1402,7 @@ def add_user(current_user):
     
     save_users(users_data)
     log_action(current_user['username'], "user_created", f"Создан пользователь {username} с префиксом {prefix}", request.remote_addr)
+    log_user_activity(current_user['username'], "user_created", f"Создан пользователь {username}")
     
     return jsonify({"success": True, "message": "Пользователь создан"})
 
@@ -1466,19 +1521,6 @@ services:
     networks:
       - server-net
 
-  stable-diffusion:
-    image: lscr.io/linuxserver/stablediffusion-webui:latest
-    container_name: stable-diffusion
-    restart: unless-stopped
-    ports:
-      - "7860:7860"
-    volumes:
-      - ./stable-diffusion/config:/config
-    environment:
-      - TZ=Europe/Moscow
-    networks:
-      - server-net
-
   nextcloud:
     image: nextcloud:latest
     container_name: nextcloud
@@ -1537,8 +1579,8 @@ services:
       - server-net
 DOCKER_EOF
 
-# 12. AI КАМПУС (РЕАЛЬНАЯ ВЕРСИЯ)
-log "🎓 Настройка реального AI Кампуса..."
+# 12. AI КАМПУС (БЕЗ ПРЕДМЕТНЫХ КНОПОК)
+log "🎓 Настройка AI Кампуса без предметных кнопок..."
 
 cat > "/home/$CURRENT_USER/docker/ai-campus/Dockerfile" << 'CAMPUS_DOCKERFILE'
 FROM python:3.9-slim
@@ -1574,66 +1616,170 @@ HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>AI Кампус - реальный помощник для учебы</title>
+    <title>AI Кампус - умный помощник</title>
     <style>
-        body { font-family: Arial; margin: 40px; background: #f0f2f5; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }
-        h1 { color: #2c3e50; text-align: center; }
-        .chat-box { border: 1px solid #ddd; padding: 20px; height: 400px; overflow-y: auto; margin: 20px 0; background: #fafafa; }
-        .message { margin: 10px 0; padding: 10px; border-radius: 5px; max-width: 80%; }
-        .user { background: #3498db; color: white; margin-left: auto; text-align: right; }
-        .ai { background: #ecf0f1; color: #333; }
-        .loading { color: #7f8c8d; font-style: italic; }
-        .input-group { display: flex; gap: 10px; }
-        input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
-        button { padding: 10px 20px; background: #3498db; color: white; border: none; border-radius: 5px; cursor: pointer; }
-        button:hover { background: #2980b9; }
-        .subject-buttons { display: flex; gap: 10px; margin: 15px 0; flex-wrap: wrap; }
-        .subject-btn { padding: 8px 15px; background: #95a5a6; color: white; border: none; border-radius: 15px; cursor: pointer; font-size: 12px; }
-        .subject-btn:hover { background: #7f8c8d; }
-        .error { color: #e74c3c; }
-        .success { color: #27ae60; }
+        body { 
+            font-family: 'Arial', sans-serif; 
+            margin: 0; 
+            padding: 0; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container { 
+            max-width: 900px; 
+            margin: 0 auto; 
+            background: white; 
+            min-height: 100vh;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+        }
+        .header p {
+            margin: 10px 0 0 0;
+            opacity: 0.9;
+        }
+        .chat-container {
+            padding: 20px;
+            height: calc(100vh - 200px);
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-box { 
+            flex: 1; 
+            border: 2px solid #e0e0e0; 
+            padding: 20px; 
+            overflow-y: auto; 
+            margin-bottom: 20px; 
+            background: #fafafa;
+            border-radius: 15px;
+        }
+        .message { 
+            margin: 15px 0; 
+            padding: 15px; 
+            border-radius: 15px; 
+            max-width: 80%; 
+            line-height: 1.5;
+            animation: fadeIn 0.3s ease-in;
+        }
+        .user { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+            margin-left: auto; 
+            text-align: right;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        .ai { 
+            background: white; 
+            color: #333; 
+            border: 2px solid #e0e0e0;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .loading { 
+            color: #7f8c8d; 
+            font-style: italic; 
+            text-align: center;
+        }
+        .input-container { 
+            display: flex; 
+            gap: 10px; 
+            background: white;
+            padding: 15px;
+            border-radius: 15px;
+            border: 2px solid #e0e0e0;
+        }
+        input { 
+            flex: 1; 
+            padding: 15px 20px; 
+            border: 2px solid #ddd; 
+            border-radius: 25px; 
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        input:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        button { 
+            padding: 15px 30px; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+            border: none; 
+            border-radius: 25px; 
+            cursor: pointer; 
+            font-size: 16px;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+        .error { 
+            color: #e74c3c; 
+            text-align: center;
+            margin: 10px 0;
+        }
+        .success { 
+            color: #27ae60; 
+            text-align: center;
+            margin: 10px 0;
+        }
+        .message-header {
+            font-weight: bold;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .welcome-message {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+            margin: 20px 0;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎓 AI Кампус - реальный помощник для учебы</h1>
-        <p>Задавайте вопросы по любым учебным предметам. Использует реальную AI модель Llama 2</p>
-        
-        <div class="subject-buttons">
-            <button class="subject-btn" onclick="askSubject('математика')">📐 Математика</button>
-            <button class="subject-btn" onclick="askSubject('физика')">⚛️ Физика</button>
-            <button class="subject-btn" onclick="askSubject('программирование')">💻 Программирование</button>
-            <button class="subject-btn" onclick="askSubject('история')">📚 История</button>
-            <button class="subject-btn" onclick="askSubject('биология')">🧬 Биология</button>
-            <button class="subject-btn" onclick="askSubject('химия')">🧪 Химия</button>
-        </div>
-
-        <div class="chat-box" id="chatBox">
-            <div class="message ai">🤖 Привет! Я твой AI помощник для учебы. Задавай вопросы по любым предметам. Я использую реальную модель Llama 2 для ответов!</div>
+        <div class="header">
+            <h1>🎓 AI Кампус</h1>
+            <p>Умный помощник для любых вопросов</p>
         </div>
         
-        <div class="input-group">
-            <input type="text" id="messageInput" placeholder="Введите ваш вопрос..." onkeypress="handleKeyPress(event)">
-            <button onclick="sendMessage()">Отправить</button>
+        <div class="chat-container">
+            <div class="chat-box" id="chatBox">
+                <div class="welcome-message">
+                    🤖 Привет! Я твой AI помощник. Задавай любые вопросы - по учебе, программированию, 
+                    или просто поболтаем! Я использую реальную модель Llama 2 для ответов.
+                </div>
+                <div class="message ai">
+                    <div class="message-header">AI Помощник</div>
+                    Привет! Я готов помочь тебе с любыми вопросами. Что ты хочешь узнать?
+                </div>
+            </div>
+            
+            <div class="input-container">
+                <input type="text" id="messageInput" placeholder="Задайте любой вопрос..." onkeypress="handleKeyPress(event)">
+                <button onclick="sendMessage()">Отправить</button>
+            </div>
+            
+            <div id="statusMessage"></div>
         </div>
-        
-        <div id="statusMessage"></div>
     </div>
 
     <script>
-        function askSubject(subject) {
-            const questions = {
-                'математика': 'Объясни теорему Пифагора',
-                'физика': 'Что такое закон сохранения энергии?',
-                'программирование': 'Объясни основы Python',
-                'история': 'Расскажи о Второй мировой войне',
-                'биология': 'Что такое ДНК и как она работает?',
-                'химия': 'Объясни периодическую таблицу элементов'
-            };
-            document.getElementById('messageInput').value = questions[subject] || \`Расскажи о \${subject}\`;
-        }
-
         function handleKeyPress(event) {
             if (event.key === 'Enter') {
                 sendMessage();
@@ -1654,8 +1800,15 @@ HTML_TEMPLATE = '''
             
             const chatBox = document.getElementById('chatBox');
             
-            chatBox.innerHTML += \`<div class="message user">👤 \${message}</div>\`;
+            // Добавляем сообщение пользователя
+            chatBox.innerHTML += \`
+                <div class="message user">
+                    <div class="message-header">Вы</div>
+                    \${message}
+                </div>
+            \`;
             
+            // Показываем индикатор загрузки
             const loadingId = 'loading-' + Date.now();
             chatBox.innerHTML += \`<div class="message ai loading" id="\${loadingId}">🤖 Думаю над ответом...</div>\`;
             chatBox.scrollTop = chatBox.scrollHeight;
@@ -1671,23 +1824,42 @@ HTML_TEMPLATE = '''
                 
                 const data = await response.json();
                 
+                // Убираем индикатор загрузки
                 document.getElementById(loadingId).remove();
                 
                 if (data.answer) {
-                    chatBox.innerHTML += \`<div class="message ai">🤖 \${data.answer}</div>\`;
+                    chatBox.innerHTML += \`
+                        <div class="message ai">
+                            <div class="message-header">AI Помощник</div>
+                            \${data.answer}
+                        </div>
+                    \`;
                     showStatus('Ответ получен успешно!', 'success');
                 } else {
-                    chatBox.innerHTML += \`<div class="message ai">❌ Ошибка: \${data.error || 'Не удалось получить ответ'}</div>\`;
+                    chatBox.innerHTML += \`
+                        <div class="message ai">
+                            <div class="message-header">AI Помощник</div>
+                            ❌ Ошибка: \${data.error || 'Не удалось получить ответ'}
+                        </div>
+                    \`;
                     showStatus('Ошибка при получении ответа', 'error');
                 }
             } catch (error) {
                 document.getElementById(loadingId).remove();
-                chatBox.innerHTML += \`<div class="message ai">❌ Ошибка соединения с сервером</div>\`;
+                chatBox.innerHTML += \`
+                    <div class="message ai">
+                        <div class="message-header">AI Помощник</div>
+                        ❌ Ошибка соединения с сервером
+                    </div>
+                \`;
                 showStatus('Ошибка сети', 'error');
             }
             
             chatBox.scrollTop = chatBox.scrollHeight;
         }
+
+        // Автофокус на поле ввода
+        document.getElementById('messageInput').focus();
     </script>
 </body>
 </html>
@@ -1722,7 +1894,7 @@ def ask_question():
         # Отправляем запрос к Ollama
         payload = {
             "model": "llama2",
-            "prompt": f"Ты полезный помощник для учебы. Ответь на русском языке на вопрос студента: {question}. Давай развернутый и полезный ответ.",
+            "prompt": f"Ты полезный AI помощник. Ответь на русском языке на вопрос: {question}. Давай развернутый и полезный ответ.",
             "stream": False,
             "options": {
                 "temperature": 0.7,
@@ -1757,8 +1929,8 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
 CAMPUS_PYTHON
 
-# 13. АДМИН-ПАНЕЛЬ
-log "🛠️ Настройка админ-панели..."
+# 13. АДМИН-ПАНЕЛЬ С АКТИВНОСТЬЮ ПОЛЬЗОВАТЕЛЕЙ
+log "🛠️ Настройка админ-панели с отслеживанием активности..."
 
 cat > "/home/$CURRENT_USER/docker/admin-panel/Dockerfile" << 'ADMIN_DOCKERFILE'
 FROM python:3.9-slim
@@ -1803,12 +1975,18 @@ HTML_TEMPLATE = '''
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: Arial; background: #1a1a1a; color: white; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
         .header { text-align: center; margin-bottom: 30px; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
         .stat-card { background: #2d2d2d; padding: 20px; border-radius: 10px; border-left: 4px solid #3498db; }
         .stat-value { font-size: 2em; font-weight: bold; color: #3498db; }
-        .services-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
+        .stat-label { font-size: 0.9em; color: #bbb; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .tab { padding: 10px 20px; background: #2d2d2d; border: none; color: white; border-radius: 5px; cursor: pointer; }
+        .tab.active { background: #3498db; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .services-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-bottom: 30px; }
         .service-card { background: #2d2d2d; padding: 15px; border-radius: 8px; }
         .service-name { font-weight: bold; margin-bottom: 10px; }
         .service-status { padding: 3px 8px; border-radius: 12px; font-size: 0.8em; }
@@ -1819,6 +1997,13 @@ HTML_TEMPLATE = '''
         .btn-start { background: #27ae60; color: white; }
         .btn-stop { background: #e74c3c; color: white; }
         .btn-restart { background: #3498db; color: white; }
+        .activity-table { width: 100%; background: #2d2d2d; border-radius: 8px; overflow: hidden; }
+        .activity-table th, .activity-table td { padding: 12px; text-align: left; border-bottom: 1px solid #444; }
+        .activity-table th { background: #3498db; color: white; }
+        .activity-table tr:hover { background: #3d3d3d; }
+        .user-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.8em; }
+        .badge-admin { background: #e74c3c; color: white; }
+        .badge-user { background: #3498db; color: white; }
         .logs { background: #000; color: #0f0; padding: 15px; border-radius: 5px; font-family: monospace; height: 200px; overflow-y: auto; margin-top: 20px; }
     </style>
 </head>
@@ -1826,40 +2011,121 @@ HTML_TEMPLATE = '''
     <div class="container">
         <div class="header">
             <h1>🛠️ Админ-панель сервера</h1>
-            <p>Управление системой и мониторинг</p>
+            <p>Управление системой и мониторинг активности</p>
         </div>
         
         <div class="stats-grid">
             <div class="stat-card">
-                <div>CPU Использование</div>
+                <div class="stat-label">CPU Использование</div>
                 <div class="stat-value" id="cpuUsage">0%</div>
             </div>
             <div class="stat-card">
-                <div>Память</div>
+                <div class="stat-label">Память</div>
                 <div class="stat-value" id="memoryUsage">0%</div>
             </div>
             <div class="stat-card">
-                <div>Диск</div>
+                <div class="stat-label">Диск</div>
                 <div class="stat-value" id="diskUsage">0%</div>
             </div>
             <div class="stat-card">
-                <div>Контейнеры</div>
+                <div class="stat-label">Контейнеры</div>
                 <div class="stat-value" id="containerCount">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Активность сегодня</div>
+                <div class="stat-value" id="todayActivity">0</div>
             </div>
         </div>
 
-        <h2>🚀 Сервисы</h2>
-        <div class="services-grid" id="servicesGrid">
-            <!-- Сервисы будут здесь -->
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('services')">🚀 Сервисы</button>
+            <button class="tab" onclick="showTab('activity')">📊 Активность</button>
+            <button class="tab" onclick="showTab('users')">👥 Пользователи</button>
+            <button class="tab" onclick="showTab('logs')">📋 Логи</button>
         </div>
 
-        <h2>📊 Системные логи</h2>
-        <div class="logs" id="systemLogs">
-            Загрузка логов...
+        <div id="services-tab" class="tab-content active">
+            <h2>🚀 Управление сервисами</h2>
+            <div class="services-grid" id="servicesGrid">
+                <!-- Сервисы будут здесь -->
+            </div>
+        </div>
+
+        <div id="activity-tab" class="tab-content">
+            <h2>📊 Активность пользователей</h2>
+            <div class="activity-table-container">
+                <table class="activity-table" id="activityTable">
+                    <thead>
+                        <tr>
+                            <th>Время</th>
+                            <th>Пользователь</th>
+                            <th>Действие</th>
+                            <th>Сервис</th>
+                            <th>IP</th>
+                        </tr>
+                    </thead>
+                    <tbody id="activityTableBody">
+                        <!-- Активность будет здесь -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="users-tab" class="tab-content">
+            <h2>👥 Управление пользователями</h2>
+            <div class="activity-table-container">
+                <table class="activity-table" id="usersTable">
+                    <thead>
+                        <tr>
+                            <th>Логин</th>
+                            <th>Роль</th>
+                            <th>Создан</th>
+                            <th>Входов</th>
+                            <th>Последняя активность</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody">
+                        <!-- Пользователи будут здесь -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="logs-tab" class="tab-content">
+            <h2>📋 Системные логи</h2>
+            <div class="logs" id="systemLogs">
+                Загрузка логов...
+            </div>
         </div>
     </div>
 
     <script>
+        let currentTab = 'services';
+
+        function showTab(tabName) {
+            // Скрываем все вкладки
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Показываем выбранную вкладку
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+            currentTab = tabName;
+            
+            // Загружаем данные для вкладки
+            if (tabName === 'activity') {
+                loadActivity();
+            } else if (tabName === 'users') {
+                loadUsers();
+            } else if (tabName === 'logs') {
+                loadLogs();
+            }
+        }
+
         async function loadStats() {
             try {
                 const response = await fetch('/api/stats');
@@ -1869,7 +2135,9 @@ HTML_TEMPLATE = '''
                 document.getElementById('memoryUsage').textContent = data.memory_percent + '%';
                 document.getElementById('diskUsage').textContent = data.disk_percent + '%';
                 document.getElementById('containerCount').textContent = data.container_count;
+                document.getElementById('todayActivity').textContent = data.today_activity || 0;
                 
+                // Обновляем сервисы
                 let servicesHtml = '';
                 data.services.forEach(service => {
                     servicesHtml += \`
@@ -1890,6 +2158,79 @@ HTML_TEMPLATE = '''
                 console.error('Error loading stats:', error);
             }
         }
+
+        async function loadActivity() {
+            try {
+                const response = await fetch('/api/activity');
+                const activity = await response.json();
+                
+                let activityHtml = '';
+                activity.reverse().forEach(item => {
+                    const time = new Date(item.timestamp).toLocaleString();
+                    activityHtml += \`
+                        <tr>
+                            <td>\${time}</td>
+                            <td>
+                                <span class="user-badge badge-\${item.user_prefix?.toLowerCase() || 'user'}">
+                                    \${item.username}
+                                </span>
+                            </td>
+                            <td>\${item.action}</td>
+                            <td>\${item.service || '-'}</td>
+                            <td>\${item.ip}</td>
+                        </tr>
+                    \`;
+                });
+                document.getElementById('activityTableBody').innerHTML = activityHtml;
+            } catch (error) {
+                console.error('Error loading activity:', error);
+            }
+        }
+
+        async function loadUsers() {
+            try {
+                const response = await fetch('/api/users');
+                const users = await response.json();
+                
+                let usersHtml = '';
+                users.forEach(user => {
+                    const created = new Date(user.created_at).toLocaleDateString();
+                    const lastActivity = user.last_activity ? new Date(user.last_activity).toLocaleString() : 'Нет активности';
+                    usersHtml += \`
+                        <tr>
+                            <td>\${user.username}</td>
+                            <td>
+                                <span class="user-badge badge-\${user.prefix?.toLowerCase() || 'user'}">
+                                    \${user.prefix}
+                                </span>
+                            </td>
+                            <td>\${created}</td>
+                            <td>\${user.login_count || 0}</td>
+                            <td>\${lastActivity}</td>
+                        </tr>
+                    \`;
+                });
+                document.getElementById('usersTableBody').innerHTML = usersHtml;
+            } catch (error) {
+                console.error('Error loading users:', error);
+            }
+        }
+
+        async function loadLogs() {
+            try {
+                const response = await fetch('/api/logs');
+                const logs = await response.json();
+                
+                let logsHtml = '';
+                logs.reverse().forEach(log => {
+                    const time = new Date(log.timestamp).toLocaleString();
+                    logsHtml += \`[\${time}] \${log.username} - \${log.action} - \${log.details}\\n\`;
+                });
+                document.getElementById('systemLogs').textContent = logsHtml;
+            } catch (error) {
+                console.error('Error loading logs:', error);
+            }
+        }
         
         async function controlService(serviceName, action) {
             try {
@@ -1906,7 +2247,13 @@ HTML_TEMPLATE = '''
             }
         }
         
-        setInterval(loadStats, 5000);
+        setInterval(() => {
+            loadStats();
+            if (currentTab === 'activity') loadActivity();
+            if (currentTab === 'users') loadUsers();
+            if (currentTab === 'logs') loadLogs();
+        }, 5000);
+        
         loadStats();
     </script>
 </body>
@@ -1920,15 +2267,22 @@ def admin_panel():
 @app.route('/api/stats')
 def get_stats():
     try:
+        # CPU использование
         cpu_percent = psutil.cpu_percent(interval=1)
+        
+        # Память
         memory = psutil.virtual_memory()
         memory_percent = memory.percent
+        
+        # Диск
         disk = psutil.disk_usage('/')
         disk_percent = disk.percent
         
+        # Docker контейнеры
         containers = client.containers.list(all=True)
         container_count = len(containers)
         
+        # Сервисы
         services = []
         for container in containers:
             service = {
@@ -1943,17 +2297,65 @@ def get_stats():
                 service['actions'].append('start')
                 
             services.append(service)
+
+        # Получаем статистику активности из auth-server
+        try:
+            auth_response = requests.get('http://auth-server:5001/api/admin/stats', timeout=5)
+            if auth_response.status_code == 200:
+                auth_data = auth_response.json()
+                today_activity = auth_data.get('todayLogins', 0)
+            else:
+                today_activity = 0
+        except:
+            today_activity = 0
         
         return jsonify({
             'cpu_percent': round(cpu_percent, 1),
             'memory_percent': round(memory_percent, 1),
             'disk_percent': round(disk_percent, 1),
             'container_count': container_count,
+            'today_activity': today_activity,
             'services': services
         })
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/activity')
+def get_activity():
+    try:
+        # Получаем активность из auth-server
+        auth_response = requests.get('http://auth-server:5001/api/admin/activity', timeout=5)
+        if auth_response.status_code == 200:
+            return jsonify(auth_response.json())
+        else:
+            return jsonify([])
+    except:
+        return jsonify([])
+
+@app.route('/api/users')
+def get_users():
+    try:
+        # Получаем пользователей из auth-server
+        auth_response = requests.get('http://auth-server:5001/api/admin/users', timeout=5)
+        if auth_response.status_code == 200:
+            return jsonify(auth_response.json())
+        else:
+            return jsonify([])
+    except:
+        return jsonify([])
+
+@app.route('/api/logs')
+def get_logs():
+    try:
+        # Получаем логи из auth-server
+        auth_response = requests.get('http://auth-server:5001/api/admin/logs', timeout=5)
+        if auth_response.status_code == 200:
+            return jsonify(auth_response.json())
+        else:
+            return jsonify([])
+    except:
+        return jsonify([])
 
 @app.route('/api/service/control', methods=['POST'])
 def control_service():
@@ -2042,12 +2444,6 @@ http {
             proxy_set_header X-Real-IP $remote_addr;
         }
 
-        location /ai-images/ {
-            proxy_pass http://stable-diffusion:7860/;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-        }
-
         location /nextcloud/ {
             proxy_pass http://nextcloud:80/;
             proxy_set_header Host $host;
@@ -2081,7 +2477,33 @@ http {
 }
 NGINX_EOF
 
-# 15. СКРИПТЫ УПРАВЛЕНИЯ
+# 15. СКРИПТ УДАЛЕНИЯ STABLE DIFFUSION
+log "🗑️ Создание скрипта удаления Stable Diffusion..."
+
+cat > "/home/$CURRENT_USER/scripts/remove-stable-diffusion.sh" << 'REMOVE_SD_EOF'
+#!/bin/bash
+
+echo "🗑️ Удаление Stable Diffusion..."
+
+# Останавливаем сервис
+cd ~/docker && docker-compose stop stable-diffusion 2>/dev/null
+
+# Удаляем контейнер
+docker-compose rm -f stable-diffusion 2>/dev/null
+
+# Удаляем данные
+sudo rm -rf ~/docker/stable-diffusion
+
+# Удаляем из docker-compose.yml
+sed -i '/stable-diffusion:/,/^[[:space:]]*$/d' ~/docker/docker-compose.yml
+
+echo "✅ Stable Diffusion полностью удален!"
+echo "🔄 Перезапустите систему: cd ~/docker && docker-compose up -d"
+REMOVE_SD_EOF
+
+chmod +x "/home/$CURRENT_USER/scripts/remove-stable-diffusion.sh"
+
+# 16. СКРИПТЫ УПРАВЛЕНИЯ
 log "📜 Создание скриптов управления..."
 
 cat > "/home/$CURRENT_USER/scripts/change-password.sh" << 'PASSWORD_EOF'
@@ -2200,13 +2622,13 @@ ADD_USER_EOF
 chmod +x "/home/$CURRENT_USER/scripts/change-password.sh"
 chmod +x "/home/$CURRENT_USER/scripts/add-user.sh"
 
-# 16. ЗАПУСК ВСЕХ СЕРВИСОВ
+# 17. ЗАПУСК ВСЕХ СЕРВИСОВ
 log "🚀 Запуск всех сервисов..."
 
 cd "/home/$CURRENT_USER/docker" || exit
 
 log "🔍 Проверка занятых портов..."
-PORTS=(80 8096 11435 5000 7860 8080 3001 5002 9000 8081 11434)
+PORTS=(80 8096 11435 5000 8080 3001 5002 9000 8081 11434)
 for port in "${PORTS[@]}"; do
     if ss -tulpn | grep ":$port " > /dev/null; then
         log "⚠️ Порт $port уже занят"
@@ -2221,7 +2643,7 @@ sleep 10
 log "📊 Проверка статуса сервисов..."
 docker-compose ps
 
-# 17. АВТОМАТИЧЕСКОЕ РЕЗЕРВНОЕ КОПИРОВАНИЕ
+# 18. АВТОМАТИЧЕСКОЕ РЕЗЕРВНОЕ КОПИРОВАНИЕ
 log "💾 Настройка автоматического резервного копирования..."
 
 mkdir -p "/home/$CURRENT_USER/backups"
@@ -2255,7 +2677,7 @@ BACKUP_EOF
 
 chmod +x "/home/$CURRENT_USER/scripts/backup-system.sh"
 
-# 18. МОНИТОРИНГ РЕСУРСОВ
+# 19. МОНИТОРИНГ РЕСУРСОВ
 log "📊 Настройка мониторинга ресурсов..."
 
 cat > "/home/$CURRENT_USER/scripts/system-monitor.sh" << 'MONITOR_EOF'
@@ -2280,7 +2702,7 @@ MONITOR_EOF
 
 chmod +x "/home/$CURRENT_USER/scripts/system-monitor.sh"
 
-# 19. НАСТРОЙКА РАСПИСАНИЯ
+# 20. НАСТРОЙКА РАСПИСАНИЯ
 log "⏰ Настройка расписания..."
 
 sudo timedatectl set-timezone Asia/Yekaterinburg
@@ -2313,7 +2735,7 @@ sudo systemctl restart fail2ban
 
 log "🕐 Текущее время системы: $(date)"
 
-# 20. ФИНАЛЬНАЯ ИНФОРМАЦИЯ
+# 21. ФИНАЛЬНАЯ ИНФОРМАЦИЯ
 echo ""
 echo "=========================================="
 echo "🎉 ПОЛНАЯ СИСТЕМА УСПЕШНО УСТАНОВЛЕНА!"
@@ -2343,9 +2765,8 @@ echo "🚀 ВСЕ СЕРВИСЫ:"
 echo "   🎬 Jellyfin: http://$SERVER_IP/jellyfin"
 echo "   🤖 AI Ассистент: http://$SERVER_IP/ai-chat"
 echo "   🎓 AI Кампус: http://$SERVER_IP/ai-campus"
-echo "   🎨 Генератор изображений: http://$SERVER_IP/ai-images"
-echo "   🔒 VPN информация: http://$SERVER_IP/vpn-info"
 echo "   ☁️ Nextcloud: http://$SERVER_IP/nextcloud"
+echo "   🔒 VPN информация: http://$SERVER_IP/vpn-info"
 echo "   📊 Мониторинг: http://$SERVER_IP/monitoring"
 echo "   🛠️ Админ-панель: http://$SERVER_IP/admin-panel"
 echo "   🐳 Portainer: http://$SERVER_IP/portainer"
@@ -2362,16 +2783,19 @@ echo ""
 echo "🛠️ СКРИПТЫ УПРАВЛЕНИЯ:"
 echo "   🔑 Смена пароля: ~/scripts/change-password.sh"
 echo "   👥 Добавить пользователя: ~/scripts/add-user.sh"
-echo "   🔒 VPN статус: ~/scripts/vpn-status.sh"
+echo "   🗑️ Удалить Stable Diffusion: ~/scripts/remove-stable-diffusion.sh"
 echo ""
-echo "📊 МОНИТОРИНГ:"
-echo "   Статус всех сервисов: docker-compose ps"
-echo "   Логи: docker-compose logs"
+echo "📊 АДМИН-ПАНЕЛЬ ФУНКЦИИ:"
+echo "   🚀 Управление сервисами - запуск/остановка"
+echo "   📊 Активность - кто и когда заходил"
+echo "   👥 Пользователи - статистика пользователей"
+echo "   📋 Логи - системные логи"
 echo ""
 echo "⚠️  ВАЖНЫЕ ЗАМЕЧАНИЯ:"
 echo "   1. AI модели загружаются автоматически при первом запуске"
 echo "   2. Для полной функциональности перезагрузите систему"
 echo "   3. Все виджеты обновляются автоматически"
+echo "   4. Stable Diffusion удален из системы"
 echo ""
 echo "=========================================="
 echo "🎯 СИСТЕМА ГОТОВА К ИСПОЛЬЗОВАНИЮ!"
