@@ -123,17 +123,19 @@ generate_auth_secret() {
 
 get_interface() {
     local interface
+    # Более надежный способ определения основного интерфейса
     interface=$(ip route | awk '/default/ {print $5}' | head -1)
     
     if [ -z "$interface" ]; then
-        interface=$(ip link show | awk -F: '/state UP/ && !/lo:/ {print $2}' | tr -d ' ' | head -1)
+        interface=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | head -1)
     fi
     
     if [ -z "$interface" ]; then
+        # Резервный вариант - используем glob вместо ls | grep
         for iface in /sys/class/net/*; do
             iface_name=$(basename "$iface")
             if [ "$iface_name" != "lo" ] && [ -f "/sys/class/net/$iface_name/operstate" ]; then
-                if [ "$(cat "/sys/class/net/$iface_name/operstate")" = "up" ]; then
+                if [ "$(cat "/sys/class/net/$iface_name/operstate")" = "up" ] 2>/dev/null; then
                     interface="$iface_name"
                     break
                 fi
@@ -172,6 +174,19 @@ check_required_commands() {
             log "⚠️ $cmd не найдена, будет установлена"
         else
             log "✅ $cmd найдена"
+        fi
+    done
+}
+
+check_python_dependencies() {
+    log "🔍 Проверка Python зависимостей..."
+    local required_packages=("bcrypt" "flask" "requests" "docker" "psutil")
+    
+    for package in "${required_packages[@]}"; do
+        if ! python3 -c "import $package" 2>/dev/null; then
+            log "⚠️ $package не найден, будет установлен"
+        else
+            log "✅ $package найден"
         fi
     done
 }
@@ -229,13 +244,16 @@ install_docker_compose() {
 hash_password() {
     local password="$1"
     python3 -c "
-import bcrypt
 import sys
-password = sys.argv[1]
-salt = bcrypt.gensalt(rounds=12)
-hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
-print(hashed.decode('utf-8'))
-" "$password"
+try:
+    import bcrypt
+    salt = bcrypt.gensalt(rounds=12)
+    hashed = bcrypt.hashpw('$password'.encode('utf-8'), salt)
+    print(hashed.decode('utf-8'))
+except ImportError:
+    import hashlib
+    print(hashlib.sha256('$password'.encode()).hexdigest())
+" 
 }
 
 # --- MAIN EXECUTION START ---
@@ -281,6 +299,7 @@ AUTH_SECRET="$AUTH_SECRET"
 CONFIG_EOF
 
 chmod 600 "/home/$CURRENT_USER/.config/server_env"
+# shellcheck source=/dev/null
 source "/home/$CURRENT_USER/.config/server_env"
 
 echo "=========================================="
@@ -299,6 +318,7 @@ fi
 
 check_disk_space
 check_required_commands
+check_python_dependencies
 check_ports || exit 1
 
 log "📦 Обновление системы..."
@@ -2291,11 +2311,12 @@ class RealTorrentSearcher:
     
     def parse_1337x_results(self, html, query):
         results = []
-        soup = BeautifulSoup(html, 'html.parser')
         
         try:
+            soup = BeautifulSoup(html, 'html.parser')
             table = soup.find('table', class_='table-list')
             if not table:
+                self.logger.debug("1337x: таблица результатов не найдена")
                 return results
             
             for row in table.find_all('tr')[1:11]:
@@ -2316,9 +2337,12 @@ class RealTorrentSearcher:
                     
                     seeds = 0
                     try:
-                        seeds = int(seeds_cell.get_text(strip=True))
-                    except:
-                        pass
+                        seeds_text = seeds_cell.get_text(strip=True)
+                        seeds = int(seeds_text)
+                    except ValueError as e:
+                        self.logger.debug(f"1337x: ошибка парсинга сидов '{seeds_text}': {e}")
+                    except Exception as e:
+                        self.logger.warning(f"1337x: неожиданная ошибка парсинга сидов: {e}")
                     
                     magnet_link = self.get_1337x_magnet(torrent_url)
                     
@@ -2334,10 +2358,11 @@ class RealTorrentSearcher:
                         })
                         
                 except Exception as e:
+                    self.logger.warning(f"1337x: ошибка обработки строки результата: {e}")
                     continue
                     
         except Exception as e:
-            self.logger.error(f"Ошибка парсинга 1337x: {e}")
+            self.logger.error(f"1337x: критическая ошибка парсинга: {e}")
         
         return results
     
@@ -2353,8 +2378,14 @@ class RealTorrentSearcher:
                 magnet_link = soup.find('a', href=re.compile(r'^magnet:'))
                 if magnet_link:
                     return magnet_link['href']
-        except:
-            pass
+            else:
+                self.logger.warning(f"1337x magnet: HTTP {response.status_code} для {torrent_url}")
+        except requests.exceptions.Timeout:
+            self.logger.warning(f"1337x magnet: Таймаут для {torrent_url}")
+        except requests.exceptions.RequestException as e:
+            self.logger.warning(f"1337x magnet: Ошибка сети для {torrent_url}: {e}")
+        except Exception as e:
+            self.logger.error(f"1337x magnet: Неожиданная ошибка для {torrent_url}: {e}")
         
         return None
     
@@ -2472,26 +2503,26 @@ class RealTorrentSearcher:
         try:
             for div in soup.find_all('div', class_='tgxtablerow')[:10]:
                 try:
-                    title_div = div.find('div', class_='tgxtablecell')
-                    if not title_div:
+                    cells = div.find_all('div', class_='tgxtablecell')
+                    if len(cells) < 5:
                         continue
                     
-                    title_link = title_div.find('a', href=re.compile(r'/torrent/'))
+                    # Title cell (index 0)
+                    title_cell = cells[0]
+                    title_link = title_cell.find('a', href=re.compile(r'/torrent/'))
                     if not title_link:
                         continue
                     
                     title = title_link.get_text(strip=True)
                     
-                    seeds = 0
-                    try:
-                        seeds_text = seeds_div.get_text(strip=True)
-                        seeds_match = re.search(r'(\d+)', seeds_text)
-                        if seeds_match:
-                            seeds = int(seeds_match.group(1))
-                    except:
-                        pass
+                    # Seeds cell (index 4)
+                    seeds_cell = cells[4]
+                    seeds_text = seeds_cell.get_text(strip=True)
+                    seeds_match = re.search(r'(\d+)', seeds_text)
+                    seeds = int(seeds_match.group(1)) if seeds_match else 0
                     
-                    magnet_link = title_div.find('a', href=re.compile(r'^magnet:'))
+                    # Magnet link
+                    magnet_link = title_cell.find('a', href=re.compile(r'^magnet:'))
                     magnet = magnet_link['href'] if magnet_link else None
                     
                     if seeds > 0 and magnet:
@@ -2505,6 +2536,7 @@ class RealTorrentSearcher:
                         })
                         
                 except Exception as e:
+                    self.logger.debug(f"Ошибка обработки строки TorrentGalaxy: {e}")
                     continue
                     
         except Exception as e:
@@ -2558,6 +2590,35 @@ class RealDownloadManager:
         self.qbittorrent_client = qbittorrent_client
         self.logger = logging.getLogger(__name__)
         self.active_downloads = {}
+    
+    def format_speed(self, speed_bytes):
+        if speed_bytes == 0:
+            return "0 B/s"
+        for unit in ['B/s', 'KB/s', 'MB/s', 'GB/s']:
+            if speed_bytes < 1024.0:
+                return f"{speed_bytes:.1f} {unit}"
+            speed_bytes /= 1024.0
+        return f"{speed_bytes:.1f} TB/s"
+    
+    def format_eta(self, seconds):
+        if seconds < 0:
+            return "Unknown"
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        seconds = seconds % 60
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        elif minutes > 0:
+            return f"{minutes}m {seconds}s"
+        else:
+            return f"{seconds}s"
+    
+    def format_size(self, size_bytes):
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.2f} PB"
     
     async def start_download(self, magnet_link, title):
         try:
@@ -2809,9 +2870,9 @@ def active_downloads():
                     'name': torrent.name,
                     'progress': round(torrent.progress * 100, 1),
                     'state': torrent.state,
-                    'download_speed': self.format_speed(torrent.dlspeed),
-                    'size': self.format_size(torrent.size),
-                    'eta': self.format_eta(torrent.eta)
+                    'download_speed': download_manager.format_speed(torrent.dlspeed),
+                    'size': download_manager.format_size(torrent.size),
+                    'eta': download_manager.format_eta(torrent.eta)
                 })
         
         return jsonify({
@@ -2837,31 +2898,6 @@ def system_health():
         },
         'timestamp': datetime.now().isoformat()
     })
-
-def format_speed(self, speed_bytes):
-    if speed_bytes == 0:
-        return "0 B/s"
-    
-    for unit in ['B/s', 'KB/s', 'MB/s', 'GB/s']:
-        if speed_bytes < 1024.0:
-            return f"{speed_bytes:.1f} {unit}"
-        speed_bytes /= 1024.0
-    return f"{speed_bytes:.1f} TB/s"
-
-def format_eta(self, seconds):
-    if seconds < 0:
-        return "Unknown"
-    
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
-    seconds = seconds % 60
-    
-    if hours > 0:
-        return f"{hours}h {minutes}m"
-    elif minutes > 0:
-        return f"{minutes}m {seconds}s"
-    else:
-        return f"{seconds}s"
 
 if __name__ == '__main__':
     app.logger.info("🚀 РЕАЛЬНЫЙ сервис автоматического поиска фильмов запущен!")
