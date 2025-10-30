@@ -3180,19 +3180,20 @@ chmod +x "/home/$CURRENT_USER/scripts/generate-real-dashboard.sh"
 
 log "🚀 Запуск всех Docker контейнеров с помощью Docker Compose..."
 
-# Просто запускаем через docker compose (v2)
+
+# Устанавливаем Docker Compose v1
+log "📦 Установка Docker Compose v1..."
+sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+
+# Запускаем контейнеры
 cd "/home/$CURRENT_USER/docker"
-if sg docker -c "docker compose up -d --build"; then
-    log "✅ Docker контейнеры успешно запущены"
-    
-    # Ждем и проверяем статус
-    sleep 10
-    log "📊 Статус контейнеров:"
-    sg docker -c "docker compose ps"
-else
-    log "❌ Ошибка запуска Docker контейнеров"
-    return 1
-fi
+sudo docker-compose up -d --build
+
+# Ждем и проверяем статус
+sleep 10
+log "📊 Статус контейнеров:"
+sudo docker-compose ps
 
 log "🔧 Создание скриптов управления..."
 
