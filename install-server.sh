@@ -367,7 +367,7 @@ chmod +x "/home/$CURRENT_USER/scripts/duckdns-update.sh"
 touch "/home/$CURRENT_USER/scripts/duckdns.log"
 chmod 600 "/home/$CURRENT_USER/scripts/duckdns.log"
 
-(crontab -l 2>/dev/null | grep -v "duckdns-update.sh"; echo "*/5 * * * * /home/$CURRENT_USER/scripts/duckdns-update.sh") | crontab -
+(crontab -l 2>/dev/null | grep -v "duckdns-update.sh"; echo "*/5 * * * * /bin/bash /home/$CURRENT_USER/scripts/duckdns-update.sh >/dev/null 2>&1") | crontab -
 
 log "🔄 Первое обновление DuckDNS..."
 if "/home/$CURRENT_USER/scripts/duckdns-update.sh"; then
