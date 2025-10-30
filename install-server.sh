@@ -367,7 +367,22 @@ chmod +x "/home/$CURRENT_USER/scripts/duckdns-update.sh"
 touch "/home/$CURRENT_USER/scripts/duckdns.log"
 chmod 600 "/home/$CURRENT_USER/scripts/duckdns.log"
 
-(crontab -l 2>/dev/null | grep -v "duckdns-update.sh"; echo "*/5 * * * * /bin/bash /home/$CURRENT_USER/scripts/duckdns-update.sh >/dev/null 2>&1") | crontab -
+log "🔄 Настройка cron для DuckDNS..."
+# Создаем временный файл с корректной cron задачей
+temp_cron=$(mktemp)
+echo "*/5 * * * * /bin/bash /home/$CURRENT_USER/scripts/duckdns-update.sh >/dev/null 2>&1" > "$temp_cron"
+
+# Пробуем установить новый crontab
+if crontab "$temp_cron" 2>/dev/null; then
+    log "✅ Новый crontab установлен успешно"
+else
+    log "⚠️ Очистка и установка нового crontab..."
+    # Если не получается, очищаем и устанавливаем заново
+    crontab -r 2>/dev/null || true
+    crontab "$temp_cron"
+fi
+
+rm -f "$temp_cron"
 
 log "🔄 Первое обновление DuckDNS..."
 if "/home/$CURRENT_USER/scripts/duckdns-update.sh"; then
