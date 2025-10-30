@@ -19,7 +19,7 @@ rollback() {
     local exit_code=$?
     log "🔄 Выполняется откат изменений (код ошибки: $exit_code)..."
     
-    sg docker -c "cd /home/$CURRENT_USER/docker 2>/dev/null && docker compose down 2>/dev/null || true" || true
+    cd "/home/$CURRENT_USER/docker" 2>/dev/null && sudo docker-compose down 2>/dev/null || true
     
     sudo systemctl stop wg-quick@wg0 2>/dev/null || true
     sudo systemctl disable wg-quick@wg0 2>/dev/null || true
@@ -216,25 +216,20 @@ check_ports() {
 }
 
 install_docker_compose() {
-    if command -v docker compose &> /dev/null; then
-        log "✅ Docker Compose (v2) уже установлен"
-        return 0
-    elif command -v docker-compose &> /dev/null; then
+    if command -v docker-compose &> /dev/null; then
         log "✅ Docker Compose (v1) уже установлен"
         return 0
     fi
     
-    log "📦 Установка Docker Compose..."
-    
-    # Устанавливаем последнюю версию Docker Compose v2
-    execute_command "sudo curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose" "Загрузка Docker Compose"
+    log "📦 Установка Docker Compose v1..."
+    execute_command "sudo curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)\" -o /usr/local/bin/docker-compose" "Загрузка Docker Compose v1.29.2"
     execute_command "sudo chmod +x /usr/local/bin/docker-compose" "Установка прав Docker Compose"
     
-    # Создаем симлинк для docker compose (v2)
+    # Создаем симлинк для глобального доступа
     execute_command "sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose" "Создание симлинка"
     
     if docker-compose version &> /dev/null; then
-        log "✅ Docker Compose успешно установлен (v1)"
+        log "✅ Docker Compose успешно установлен"
         return 0
     else
         log "❌ Ошибка установки Docker Compose"
@@ -3181,19 +3176,19 @@ chmod +x "/home/$CURRENT_USER/scripts/generate-real-dashboard.sh"
 log "🚀 Запуск всех Docker контейнеров с помощью Docker Compose..."
 
 
-# Устанавливаем Docker Compose v1
-log "📦 Установка Docker Compose v1..."
-sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-sudo chmod +x /usr/local/bin/docker-compose
-
 # Запускаем контейнеры
 cd "/home/$CURRENT_USER/docker"
-sudo docker-compose up -d --build
-
-# Ждем и проверяем статус
-sleep 10
-log "📊 Статус контейнеров:"
-sudo docker-compose ps
+if sudo docker-compose up -d --build; then
+    log "✅ Docker контейнеры успешно запущены"
+    
+    # Ждем и проверяем статус
+    sleep 10
+    log "📊 Статус контейнеров:"
+    sudo docker-compose ps
+else
+    log "❌ Ошибка запуска Docker контейнеров"
+    exit 1
+fi
 
 log "🔧 Создание скриптов управления..."
 
@@ -3204,26 +3199,26 @@ source "/home/$(whoami)/.config/server_env"
 
 case "$1" in
     "start")
-        cd "/home/$CURRENT_USER/docker" && docker compose up -d
+        cd "/home/$CURRENT_USER/docker" && docker-compose up -d
         echo "✅ Все реальные сервисы запущены"
         ;;
     "stop")
-        cd "/home/$CURRENT_USER/docker" && docker compose down
+        cd "/home/$CURRENT_USER/docker" && docker-compose down
         echo "✅ Все реальные сервисы остановлены"
         ;;
     "restart")
-        cd "/home/$CURRENT_USER/docker" && docker compose restart
+        cd "/home/$CURRENT_USER/docker" && docker-compose restart
         echo "✅ Все реальные сервисы перезапущены"
         ;;
     "status")
         echo "=== РЕАЛЬНЫЕ СЕРВИСЫ ==="
-        cd "/home/$CURRENT_USER/docker" && docker compose ps
+        cd "/home/$CURRENT_USER/docker" && docker-compose ps
         ;;
     "logs")
-        cd "/home/$CURRENT_USER/docker" && docker compose logs -f
+        cd "/home/$CURRENT_USER/docker" && docker-compose logs -f
         ;;
     "admin-logs")
-        cd "/home/$CURRENT_USER/docker" && docker compose logs -f admin-panel
+        cd "/home/$CURRENT_USER/docker" && docker-compose logs -f admin-panel
         ;;
     "real-search-test")
         echo "🔍 Тестирование РЕАЛЬНОГО поиска..."
@@ -3413,7 +3408,7 @@ echo "   4. DuckDNS обновляется автоматически кажды
 echo "   5. Система работает в часовом поясе Москвы"
 echo ""
 echo "🔧 РЕАЛЬНЫЕ КОМАНДЫ ДЛЯ ПРОВЕРКИ:"
-echo "   cd /home/$CURRENT_USER/docker && docker compose ps"
+echo "   cd /home/$CURRENT_USER/docker && docker-compose ps"
 echo "   sudo systemctl status wg-quick@wg0"
 echo "   tail -f /home/$CURRENT_USER/install.log"
 echo "   ./real-system-monitor.sh"
