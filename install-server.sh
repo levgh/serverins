@@ -51,6 +51,19 @@ execute_command() {
 
 # --- INPUT AND PREP FUNCTIONS ---
 
+install_docker_compose() {
+    log "📦 Установка Docker Compose v1..."
+    execute_command "sudo curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)\" -o /usr/local/bin/docker-compose" "Загрузка Docker Compose v1.29.2"
+    execute_command "sudo chmod +x /usr/local/bin/docker-compose" "Установка прав Docker Compose"
+    
+    # Создаем симлинк для глобального доступа
+    execute_command "sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose" "Создание симлинка"
+}
+
+
+
+
+
 safe_input() {
     local prompt="$1"
     local var_name="$2"
@@ -3172,26 +3185,17 @@ chmod +x "/home/$CURRENT_USER/scripts/generate-real-dashboard.sh"
 "/home/$CURRENT_USER/scripts/generate-real-dashboard.sh"
 
 # --- Final Setup ---
-log "🚀 Запуск всех Docker контейнеров с помощью Docker Compose..."
-log "🔍 Проверка доступных команд Docker Compose..."
 
-# Пробуем разные варианты команд
-if command -v docker-compose &> /dev/null; then
-    log "✅ Используем docker-compose (v1)"
-    sg docker -c "cd /home/$CURRENT_USER/docker && docker-compose up -d --build"
-elif docker compose version &> /dev/null; then
-    log "✅ Используем docker compose (v2)"
-    sg docker -c "cd /home/$CURRENT_USER/docker && docker compose up -d --build"
-else
-    log "❌ Пробуем установить Docker Compose..."
-    install_docker_compose
-    if command -v docker-compose &> /dev/null; then
-        sg docker -c "cd /home/$CURRENT_USER/docker && docker-compose up -d --build"
-    else
-        log "⚠️ Пробуем без флага -d"
-        sg docker -c "cd /home/$CURRENT_USER/docker && docker-compose up --build"
-    fi
-fi
+log "🚀 Запуск всех Docker контейнеров с помощью Docker Compose..."
+
+# Просто используем docker-compose (v1) который точно работает
+cd "/home/$CURRENT_USER/docker"
+sg docker -c "docker-compose up -d --build"
+
+# Ждем немного и проверяем статус
+sleep 10
+log "📊 Статус запущенных контейнеров:"
+sg docker -c "docker-compose ps"
 
 log "⏳ Ожидание запуска сервисов..."
 sleep 30
