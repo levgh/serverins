@@ -2202,7 +2202,7 @@ requests==2.31.0
 aiohttp==3.8.6
 beautifulsoup4==4.12.2
 schedule==1.2.0
-qbittorrent-api==0.4.4
+qbittorrent-api==2025.7.0
 transmissionrpc==0.11
 lxml==4.9.3
 python-dotenv==1.0.0
