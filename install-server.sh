@@ -51,14 +51,6 @@ execute_command() {
 
 # --- INPUT AND PREP FUNCTIONS ---
 
-install_docker_compose() {
-    log "📦 Установка Docker Compose v1..."
-    execute_command "sudo curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)\" -o /usr/local/bin/docker-compose" "Загрузка Docker Compose v1.29.2"
-    execute_command "sudo chmod +x /usr/local/bin/docker-compose" "Установка прав Docker Compose"
-    
-    # Создаем симлинк для глобального доступа
-    execute_command "sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose" "Создание симлинка"
-}
 
 
 
@@ -3188,20 +3180,19 @@ chmod +x "/home/$CURRENT_USER/scripts/generate-real-dashboard.sh"
 
 log "🚀 Запуск всех Docker контейнеров с помощью Docker Compose..."
 
-# Просто используем docker-compose (v1) который точно работает
+# Просто запускаем через docker compose (v2)
 cd "/home/$CURRENT_USER/docker"
-sg docker -c "docker-compose up -d --build"
-
-# Ждем немного и проверяем статус
-sleep 10
-log "📊 Статус запущенных контейнеров:"
-sg docker -c "docker-compose ps"
-
-log "⏳ Ожидание запуска сервисов..."
-sleep 30
-
-log "📊 Проверка статуса реальных сервисов..."
-sg docker -c "cd /home/$CURRENT_USER/docker && docker compose ps"
+if sg docker -c "docker compose up -d --build"; then
+    log "✅ Docker контейнеры успешно запущены"
+    
+    # Ждем и проверяем статус
+    sleep 10
+    log "📊 Статус контейнеров:"
+    sg docker -c "docker compose ps"
+else
+    log "❌ Ошибка запуска Docker контейнеров"
+    return 1
+fi
 
 log "🔧 Создание скриптов управления..."
 
