@@ -211,30 +211,26 @@ check_ports() {
 }
 
 install_docker_compose() {
-    if command -v docker compose &> /dev/null || command -v docker-compose &> /dev/null; then
-        log "✅ Docker Compose (v2 or v1) уже установлен"
+    if command -v docker compose &> /dev/null; then
+        log "✅ Docker Compose (v2) уже установлен"
+        return 0
+    elif command -v docker-compose &> /dev/null; then
+        log "✅ Docker Compose (v1) уже установлен"
         return 0
     fi
     
     log "📦 Установка Docker Compose..."
     
-    if ! command -v jq &> /dev/null; then
-        execute_command "sudo apt install -y jq" "Установка jq"
-    fi
-    
-    local compose_version
-    compose_version=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | jq -r '.tag_name')
-    
-    if [ -z "$compose_version" ]; then
-        log "⚠️ Не удалось получить версию Docker Compose, используем fallback"
-        compose_version="v2.24.0"
-    fi
-    
-    execute_command "sudo curl -L https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose" "Загрузка Docker Compose"
+    # Устанавливаем последнюю версию Docker Compose v2
+    execute_command "sudo curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose" "Загрузка Docker Compose"
     execute_command "sudo chmod +x /usr/local/bin/docker-compose" "Установка прав Docker Compose"
     
-    if docker-compose version &> /dev/null || docker compose version &> /dev/null; then
-        log "✅ Docker Compose успешно установлен"
+    # Создаем симлинк для docker compose (v2)
+    execute_command "sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose" "Создание симлинка"
+    
+    if docker-compose version &> /dev/null; then
+        log "✅ Docker Compose успешно установлен (v1)"
+        return 0
     else
         log "❌ Ошибка установки Docker Compose"
         return 1
@@ -3177,7 +3173,28 @@ chmod +x "/home/$CURRENT_USER/scripts/generate-real-dashboard.sh"
 
 # --- Final Setup ---
 log "🚀 Запуск всех Docker контейнеров с помощью Docker Compose..."
-sg docker -c "cd /home/$CURRENT_USER/docker && docker compose up -d --build"
+log "🔍 Проверка версии Docker Compose..."
+
+# Проверяем какая версия Docker Compose доступна
+if command -v docker-compose &> /dev/null; then
+    log "✅ Используется docker-compose (v1)"
+    sg docker -c "cd /home/$CURRENT_USER/docker && docker-compose up -d --build"
+elif docker compose version &> /dev/null; then
+    log "✅ Используется docker compose (v2)" 
+    sg docker -c "cd /home/$CURRENT_USER/docker && docker compose up -d --build"
+else
+    log "❌ Docker Compose не найден, пытаемся установить..."
+    install_docker_compose
+    # Повторная проверка после установки
+    if command -v docker-compose &> /dev/null; then
+        sg docker -c "cd /home/$CURRENT_USER/docker && docker-compose up -d --build"
+    elif docker compose version &> /dev/null; then
+        sg docker -c "cd /home/$CURRENT_USER/docker && docker compose up -d --build"
+    else
+        log "❌ Критическая ошибка: Docker Compose недоступен"
+        return 1
+    fi
+fi
 
 log "⏳ Ожидание запуска сервисов..."
 sleep 30
