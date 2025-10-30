@@ -3173,26 +3173,23 @@ chmod +x "/home/$CURRENT_USER/scripts/generate-real-dashboard.sh"
 
 # --- Final Setup ---
 log "🚀 Запуск всех Docker контейнеров с помощью Docker Compose..."
-log "🔍 Проверка версии Docker Compose..."
+log "🔍 Проверка доступных команд Docker Compose..."
 
-# Проверяем какая версия Docker Compose доступна
+# Пробуем разные варианты команд
 if command -v docker-compose &> /dev/null; then
-    log "✅ Используется docker-compose (v1)"
+    log "✅ Используем docker-compose (v1)"
     sg docker -c "cd /home/$CURRENT_USER/docker && docker-compose up -d --build"
 elif docker compose version &> /dev/null; then
-    log "✅ Используется docker compose (v2)" 
+    log "✅ Используем docker compose (v2)"
     sg docker -c "cd /home/$CURRENT_USER/docker && docker compose up -d --build"
 else
-    log "❌ Docker Compose не найден, пытаемся установить..."
+    log "❌ Пробуем установить Docker Compose..."
     install_docker_compose
-    # Повторная проверка после установки
     if command -v docker-compose &> /dev/null; then
         sg docker -c "cd /home/$CURRENT_USER/docker && docker-compose up -d --build"
-    elif docker compose version &> /dev/null; then
-        sg docker -c "cd /home/$CURRENT_USER/docker && docker compose up -d --build"
     else
-        log "❌ Критическая ошибка: Docker Compose недоступен"
-        return 1
+        log "⚠️ Пробуем без флага -d"
+        sg docker -c "cd /home/$CURRENT_USER/docker && docker-compose up --build"
     fi
 fi
 
