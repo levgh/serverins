@@ -23,8 +23,6 @@ rollback() {
     
     sudo systemctl stop wg-quick@wg0 2>/dev/null || true
     sudo systemctl disable wg-quick@wg0 2>/dev/null || true
-    sudo systemctl stop ollama 2>/dev/null || true
-    sudo systemctl disable ollama 2>/dev/null || true
     
     log "⚠️  Установка прервана. Часть сервисов может быть не настроена."
     exit $exit_code
@@ -50,11 +48,6 @@ execute_command() {
 }
 
 # --- INPUT AND PREP FUNCTIONS ---
-
-
-
-
-
 
 safe_input() {
     local prompt="$1"
@@ -128,7 +121,6 @@ generate_auth_secret() {
 
 get_interface() {
     local interface
-    # Более надежный способ определения основного интерфейса
     interface=$(ip route | awk '/default/ {print $5}' | head -1)
     
     if [ -z "$interface" ]; then
@@ -136,7 +128,6 @@ get_interface() {
     fi
     
     if [ -z "$interface" ]; then
-        # Резервный вариант - используем glob вместо ls | grep
         for iface in /sys/class/net/*; do
             iface_name=$(basename "$iface")
             if [ "$iface_name" != "lo" ] && [ -f "/sys/class/net/$iface_name/operstate" ]; then
@@ -152,7 +143,7 @@ get_interface() {
 }
 
 check_disk_space() {
-    local required_gb=25
+    local required_gb=30
     local available_kb available_gb
     
     available_kb=$(df -k / | awk 'NR==2 {print $4}')
@@ -197,7 +188,7 @@ check_python_dependencies() {
 }
 
 check_ports() {
-    local ports=(80 8096 11435 5000 8080 3001 51820 5001 11434 5002 9000 8081 5005 9001 5006)
+    local ports=(80 8096 5000 8080 3001 51820 5001 9000 8081 5005 9001 5006 8082)
     local conflict_found=0
     
     log "🔍 Проверка доступности портов..."
@@ -225,7 +216,6 @@ install_docker_compose() {
     execute_command "sudo curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)\" -o /usr/local/bin/docker-compose" "Загрузка Docker Compose v1.29.2"
     execute_command "sudo chmod +x /usr/local/bin/docker-compose" "Установка прав Docker Compose"
     
-    # Создаем симлинк для глобального доступа
     execute_command "sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose" "Создание симлинка"
     
     if docker-compose version &> /dev/null; then
@@ -295,7 +285,6 @@ AUTH_SECRET="$AUTH_SECRET"
 CONFIG_EOF
 
 chmod 600 "/home/$CURRENT_USER/.config/server_env"
-# shellcheck source=/dev/null
 source "/home/$CURRENT_USER/.config/server_env"
 
 echo "=========================================="
@@ -330,7 +319,6 @@ log "🐳 Настройка Docker..."
 execute_command "sudo systemctl enable docker" "Включение Docker"
 execute_command "sudo systemctl start docker" "Запуск Docker"
 execute_command "sudo usermod -aG docker $CURRENT_USER" "Добавление пользователя в группу docker"
-log "⚠️ ВАЖНО: Для вступления в силу членства в группе 'docker' вам может потребоваться выйти и снова войти в систему. Мы продолжим с использованием 'sg docker'."
 
 # --- DuckDNS Setup ---
 log "🌐 Настройка DuckDNS..."
@@ -364,16 +352,13 @@ touch "/home/$CURRENT_USER/scripts/duckdns.log"
 chmod 600 "/home/$CURRENT_USER/scripts/duckdns.log"
 
 log "🔄 Настройка cron для DuckDNS..."
-# Создаем временный файл с корректной cron задачей
 temp_cron=$(mktemp)
 echo "*/5 * * * * /bin/bash /home/$CURRENT_USER/scripts/duckdns-update.sh >/dev/null 2>&1" > "$temp_cron"
 
-# Пробуем установить новый crontab
 if crontab "$temp_cron" 2>/dev/null; then
     log "✅ Новый crontab установлен успешно"
 else
     log "⚠️ Очистка и установка нового crontab..."
-    # Если не получается, очищаем и устанавливаем заново
     crontab -r 2>/dev/null || true
     crontab "$temp_cron"
 fi
@@ -485,6 +470,7 @@ if command -v ufw >/dev/null 2>&1; then
     sudo ufw allow 9000/tcp
     sudo ufw allow 9001/tcp
     sudo ufw allow 5006/tcp
+    sudo ufw allow 8082/tcp
     echo "y" | sudo ufw enable
 fi
 
@@ -504,13 +490,9 @@ fi
 log "📁 Создание структуры папок..."
 mkdir -p "/home/$CURRENT_USER/docker/heimdall"
 mkdir -p "/home/$CURRENT_USER/docker/admin-panel"
-mkdir -p "/home/$CURRENT_USER/docker/auth-server"
 mkdir -p "/home/$CURRENT_USER/docker/jellyfin"
 mkdir -p "/home/$CURRENT_USER/docker/nextcloud"
-mkdir -p "/home/$CURRENT_USER/docker/ai-chat"
-mkdir -p "/home/$CURRENT_USER/docker/ai-campus"
 mkdir -p "/home/$CURRENT_USER/docker/uptime-kuma"
-mkdir -p "/home/$CURRENT_USER/docker/ollama"
 mkdir -p "/home/$CURRENT_USER/scripts"
 mkdir -p "/home/$CURRENT_USER/data/users"
 mkdir -p "/home/$CURRENT_USER/data/logs"
@@ -524,11 +506,14 @@ mkdir -p "/home/$CURRENT_USER/media/music"
 mkdir -p "/home/$CURRENT_USER/media/temp"
 mkdir -p "/home/$CURRENT_USER/media/backups"
 mkdir -p "/home/$CURRENT_USER/media/torrents"
+mkdir -p "/home/$CURRENT_USER/nextcloud/data"
+mkdir -p "/home/$CURRENT_USER/nextcloud/config"
+mkdir -p "/home/$CURRENT_USER/nextcloud/apps"
+mkdir -p "/home/$CURRENT_USER/nextcloud/themes"
 
 mkdir -p "/home/$CURRENT_USER/docker/jellyfin/config"
 mkdir -p "/home/$CURRENT_USER/docker/nextcloud/data"
 mkdir -p "/home/$CURRENT_USER/docker/uptime-kuma/data"
-mkdir -p "/home/$CURRENT_USER/docker/ollama/data"
 mkdir -p "/home/$CURRENT_USER/docker/qbittorrent/config"
 mkdir -p "/home/$CURRENT_USER/docker/search-backend/data"
 mkdir -p "/home/$CURRENT_USER/docker/search-backend/logs"
@@ -540,9 +525,11 @@ mkdir -p "/home/$CURRENT_USER/docker/admin-panel/data"
 sudo chown -R "$CURRENT_USER:$CURRENT_USER" "/home/$CURRENT_USER/docker"
 sudo chown -R "$CURRENT_USER:$CURRENT_USER" "/home/$CURRENT_USER/data"
 sudo chown -R "$CURRENT_USER:$CURRENT_USER" "/home/$CURRENT_USER/media"
+sudo chown -R "$CURRENT_USER:$CURRENT_USER" "/home/$CURRENT_USER/nextcloud"
 sudo chmod -R 755 "/home/$CURRENT_USER/docker"
 sudo chmod -R 755 "/home/$CURRENT_USER/data"
 sudo chmod -R 755 "/home/$CURRENT_USER/media"
+sudo chmod -R 755 "/home/$CURRENT_USER/nextcloud"
 
 # --- Authentication Setup ---
 log "🔐 Настройка системы авторизации..."
@@ -700,9 +687,7 @@ def get_service_status():
     services = {
         'jellyfin': {'port': 8096, 'container': 'jellyfin'},
         'qbittorrent': {'port': 8080, 'container': 'qbittorrent'},
-        'ai-chat': {'port': 5000, 'container': 'ai-chat'},
-        'ai-campus': {'port': 5002, 'container': 'ai-campus'},
-        'ollama': {'port': 11434, 'container': 'ollama'},
+        'nextcloud': {'port': 8082, 'container': 'nextcloud'},
         'search-backend': {'port': 5000, 'container': 'search-backend'},
         'uptime-kuma': {'port': 3001, 'container': 'uptime-kuma'},
         'portainer': {'port': 9001, 'container': 'portainer'},
@@ -1308,662 +1293,6 @@ EXPOSE 5006
 CMD ["python", "app.py"]
 ADMIN_DOCKERFILE
 
-# --- AI Chat Setup ---
-log "🤖 Создание реального AI чата..."
-
-cat > "/home/$CURRENT_USER/docker/ai-chat/app.py" << 'AI_CHAT_EOF'
-from flask import Flask, render_template, request, jsonify, session
-import requests
-import json
-import time
-import logging
-from datetime import datetime
-import os
-
-app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'default-fallback-key-for-testing')
-
-OLLAMA_URL = "http://ollama:11434"
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-class RealOllamaManager:
-    def __init__(self, base_url):
-        self.base_url = base_url
-        self.available_models = []
-        self.last_update = None
-    
-    def check_availability(self):
-        try:
-            response = requests.get(f"{self.base_url}/api/version", timeout=5)
-            return response.status_code == 200
-        except Exception as e:
-            logger.error(f"Ollama недоступен: {e}")
-            return False
-    
-    def get_available_models(self):
-        try:
-            response = requests.get(f"{self.base_url}/api/tags", timeout=30)
-            if response.status_code == 200:
-                data = response.json()
-                self.available_models = data.get('models', [])
-                self.last_update = datetime.now()
-                return self.available_models
-            return []
-        except Exception as e:
-            logger.error(f"Ошибка получения моделей: {e}")
-            return []
-    
-    def ensure_model_available(self, model_name="llama2"):
-        models = self.get_available_models()
-        model_exists = any(model_name in model['name'] for model in models)
-        
-        if not model_exists:
-            logger.info(f"Модель {model_name} не найдена, начинаем загрузку через API...")
-            return self.pull_model(model_name)
-        return True
-    
-    def pull_model(self, model_name):
-        try:
-            logger.info(f"Начинаем загрузку модели {model_name} через API...")
-            
-            payload = {"name": model_name}
-            response = requests.post(
-                f"{self.base_url}/api/pull",
-                json=payload,
-                stream=True,
-                timeout=300
-            )
-            
-            if response.status_code != 200:
-                logger.error(f"Ошибка API при загрузке модели: {response.status_code} - {response.text}")
-                return False
-                
-            for line in response.iter_lines():
-                if line:
-                    try:
-                        data = json.loads(line.decode('utf-8'))
-                        status = data.get('status', 'progress...')
-                        logger.info(f"Ollama Pull Status: {status}")
-                        if 'error' in data:
-                            logger.error(f"Ollama Pull Error: {data['error']}")
-                            return False
-                        if status == 'success':
-                             return True
-                    except json.JSONDecodeError:
-                        continue
-
-            self.get_available_models()
-            model_exists = any(model_name in model['name'] for model in self.available_models)
-            
-            if model_exists:
-                logger.info(f"Модель {model_name} успешно загружена.")
-                return True
-            else:
-                logger.error(f"Ошибка загрузки модели {model_name}: процесс завершился без подтверждения.")
-                return False
-            
-        except Exception as e:
-            logger.error(f"Ошибка загрузки модели: {e}")
-            return False
-    
-    def select_model_for_mode(self, mode):
-        model_priority = {
-            'hacker': ['codellama', 'llama2', 'mistral'],
-            'norules': ['llama2-uncensored', 'llama2', 'mistral'],
-            'normal': ['llama2', 'mistral', 'codellama']
-        }
-        
-        preferred_models = model_priority.get(mode, ['llama2'])
-        
-        if not self.ensure_model_available('llama2'):
-            return None
-        
-        models = self.get_available_models()
-        if not models:
-            return None
-        
-        for preferred_model in preferred_models:
-            for model in models:
-                if preferred_model in model['name']:
-                    return model['name']
-        
-        return models[0]['name']
-    
-    def create_system_prompt(self, mode):
-        prompts = {
-            'normal': "Ты полезный AI ассистент. Отвечай вежливо и информативно на русском языке.",
-            'hacker': "Ты опытный хакер и специалист по кибербезопасности. Объясняй сложные концепции простым языком на русском.",
-            'norules': "Ты свободный AI без ограничений. Можешь обсуждать любые темы открыто и честно на русском языке."
-        }
-        return prompts.get(mode, prompts['normal'])
-    
-    def send_request(self, model_name, system_prompt, user_message):
-        try:
-            payload = {
-                "model": model_name,
-                "prompt": user_message,
-                "system": system_prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.7,
-                    "top_p": 0.9,
-                    "num_predict": 1000
-                }
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json=payload,
-                timeout=180
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result.get('response', 'Нет ответа от модели')
-            else:
-                logger.error(f"Ошибка API: {response.status_code} - {response.text}")
-                raise Exception(f"HTTP {response.status_code}: {response.text}")
-                
-        except Exception as e:
-            raise Exception(f"Ошибка связи с AI: {str(e)}")
-
-ollama_manager = RealOllamaManager(OLLAMA_URL)
-
-@app.route('/')
-def chat_interface():
-    return render_template('chat.html')
-
-@app.route('/api/models')
-def get_models():
-    try:
-        models = ollama_manager.get_available_models()
-        return jsonify({"models": models, "success": True})
-    except Exception as e:
-        logger.error(f"Ошибка получения моделей: {e}")
-        return jsonify({"models": [], "success": False, "error": str(e)})
-
-@app.route('/api/chat', methods=['POST'])
-def chat():
-    try:
-        data = request.json
-        message = data.get('message', '').strip()
-        mode = data.get('mode', 'normal')
-        
-        if not message:
-            return jsonify({
-                "success": False,
-                "message": "Пустое сообщение"
-            })
-        
-        if not ollama_manager.check_availability():
-            return jsonify({
-                "success": False,
-                "message": "Ollama сервис недоступен. Проверьте, запущен ли контейнер 'ollama' в Docker Compose."
-            })
-        
-        model_name = ollama_manager.select_model_for_mode(mode)
-        if not model_name:
-            return jsonify({
-                "success": False,
-                "message": "Нет доступных моделей. Запустите инициализацию для загрузки базовой модели 'llama2'."
-            })
-        
-        system_prompt = ollama_manager.create_system_prompt(mode)
-        
-        start_time = time.time()
-        response = ollama_manager.send_request(model_name, system_prompt, message)
-        response_time = time.time() - start_time
-        
-        logger.info(f"AI ответ за {response_time:.2f}с, модель: {model_name}")
-        
-        return jsonify({
-            "success": True,
-            "response": response,
-            "model": model_name,
-            "mode": mode,
-            "response_time": f"{response_time:.2f}с"
-        })
-            
-    except Exception as e:
-        logger.error(f"Ошибка в чате: {e}")
-        return jsonify({
-            "success": False,
-            "message": f"Ошибка: {str(e)}"
-        })
-
-@app.route('/api/pull-model', methods=['POST'])
-def pull_model():
-    try:
-        data = request.json
-        model_name = data.get('model', 'llama2')
-        
-        success = ollama_manager.pull_model(model_name)
-        
-        if success:
-            return jsonify({
-                "success": True,
-                "message": f"Модель {model_name} успешно загружена"
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "message": f"Ошибка загрузки модели {model_name}. Проверьте логи Ollama."
-            })
-            
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": f"Ошибка: {str(e)}"
-        })
-
-@app.route('/api/init-system', methods=['POST'])
-def init_system():
-    try:
-        if not ollama_manager.check_availability():
-            return jsonify({
-                "success": False,
-                "message": "Ollama недоступен. Запустите контейнер 'ollama' перед инициализацией."
-            })
-            
-        success = ollama_manager.ensure_model_available('llama2')
-        
-        if success:
-            return jsonify({
-                "success": True,
-                "message": "AI система инициализирована. Модель llama2 готова к использованию."
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "message": "Не удалось инициализировать AI систему. Проверьте логи Ollama."
-            })
-            
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": f"Ошибка инициализации: {str(e)}"
-        })
-
-@app.route('/api/health')
-def health_check():
-    ollama_available = ollama_manager.check_availability()
-    models = ollama_manager.get_available_models()
-    
-    return jsonify({
-        "status": "healthy" if ollama_available else "degraded",
-        "ollama_available": ollama_available,
-        "models_count": len(models),
-        "models": [model['name'] for model in models],
-        "timestamp": datetime.now().isoformat()
-    })
-
-if __name__ == '__main__':
-    logger.info("🚀 Запуск реального AI чата...")
-    
-    if ollama_manager.check_availability():
-        models = ollama_manager.get_available_models()
-        logger.info(f"✅ Ollama доступен. Моделей: {len(models)}")
-        for model in models:
-            logger.info(f"  - {model['name']}")
-    else:
-        logger.warning("⚠️ Ollama недоступен. Проверьте статус контейнера 'ollama'.")
-    
-    app.run(host='0.0.0.0', port=5000, debug=False)
-AI_CHAT_EOF
-
-mkdir -p "/home/$CURRENT_USER/docker/ai-chat/templates"
-cat > "/home/$CURRENT_USER/docker/ai-chat/templates/chat.html" << 'AI_CHAT_HTML'
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Ассистент - РЕАЛЬНЫЙ</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Arial', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 15px;
-            padding: 20px;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
-        }
-        .header {
-            text-align: center;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #eee;
-        }
-        .mode-selector {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-        }
-        .mode-btn {
-            padding: 10px 15px;
-            border: 2px solid #ddd;
-            border-radius: 25px;
-            background: white;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        .mode-btn.active {
-            border-color: #667eea;
-            background: #667eea;
-            color: white;
-        }
-        .chat-container {
-            height: 400px;
-            border: 1px solid #ddd;
-            border-radius: 10px;
-            padding: 15px;
-            margin-bottom: 20px;
-            overflow-y: auto;
-            background: #f9f9f9;
-        }
-        .message {
-            margin-bottom: 15px;
-            padding: 10px 15px;
-            border-radius: 15px;
-            max-width: 80%;
-        }
-        .user-message {
-            background: #667eea;
-            color: white;
-            margin-left: auto;
-        }
-        .ai-message {
-            background: white;
-            border: 1px solid #ddd;
-        }
-        .input-area {
-            display: flex;
-            gap: 10px;
-        }
-        .message-input {
-            flex: 1;
-            padding: 12px 15px;
-            border: 2px solid #ddd;
-            border-radius: 25px;
-            font-size: 16px;
-        }
-        .send-btn {
-            padding: 12px 25px;
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 25px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        .model-info {
-            text-align: center;
-            margin-top: 10px;
-            color: #666;
-            font-size: 14px;
-        }
-        .error {
-            color: #e74c3c;
-            text-align: center;
-            margin: 10px 0;
-        }
-        .loading {
-            text-align: center;
-            color: #667eea;
-            margin: 10px 0;
-        }
-        .message-info {
-            font-size: 0.8em;
-            color: #999;
-            margin-top: 5px;
-        }
-        .system-alert {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
-            border-radius: 8px;
-            padding: 10px;
-            margin: 10px 0;
-            text-align: center;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🤖 AI Ассистент - РЕАЛЬНЫЙ</h1>
-            <p>Общайтесь с реальными AI моделями через Ollama</p>
-        </div>
-
-        <div id="systemAlert" class="system-alert" style="display: none;">
-        </div>
-        
-        <div class="mode-selector">
-            <button class="mode-btn active" data-mode="normal">👨‍💼 Обычный</button>
-            <button class="mode-btn" data-mode="hacker">👨‍💻 Хакер</button>
-            <button class="mode-btn" data-mode="norules">🔓 Без ограничений</button>
-        </div>
-        
-        <div class="chat-container" id="chatContainer">
-            <div class="message ai-message">
-                Привет! Я ваш реальный AI ассистент на базе Ollama. 
-                Выберите режим и начните общение. Первое сообщение может занять время для загрузки модели.
-            </div>
-        </div>
-        
-        <div class="error" id="errorMessage" style="display: none;"></div>
-        <div class="loading" id="loadingIndicator" style="display: none;">AI думает...</div>
-        
-        <div class="input-area"> 
-            <input type="text" class="message-input" id="messageInput" placeholder="Введите ваше сообщение..."> 
-            <button class="send-btn" id="sendButton">Отправить</button> 
-        </div> 
-        <div class="model-info" id="modelInfo"> 
-            Загрузка информации о моделях... 
-        </div> 
-        <div style="text-align: center; margin-top: 15px;"> 
-            <button onclick="initAISystem()" style="padding: 8px 15px; background: #28a745; color: white; border: none; border-radius: 5px;"> 
-                🔧 Инициализировать AI систему 
-            </button> 
-        </div> 
-    </div> 
-    <script> 
-        let currentMode = 'normal'; 
-        
-        async function loadModels() { 
-            try { 
-                const response = await fetch('/api/models'); 
-                const data = await response.json(); 
-                const modelInfo = document.getElementById('modelInfo'); 
-                
-                if (data.success && data.models && data.models.length > 0) { 
-                    modelInfo.textContent = `Доступные модели: ${data.models.map(m => m.name.split(':')[0]).join(', ')}`;
-                    modelInfo.style.color = '#28a745'; 
-                } else { 
-                    modelInfo.innerHTML = 'Нет моделей. <button onclick="pullDefaultModel()">Установить Llama2</button>'; 
-                    modelInfo.style.color = '#dc3545'; 
-                } 
-            } catch (error) { 
-                document.getElementById('modelInfo').textContent = 'Ошибка загрузки моделей (нет связи с AI сервисом)'; 
-                document.getElementById('modelInfo').style.color = '#dc3545'; 
-            } 
-        } 
-
-        async function initAISystem() { 
-            const alertDiv = document.getElementById('systemAlert'); 
-            alertDiv.style.display = 'block'; 
-            alertDiv.innerHTML = '🔧 Инициализация AI системы...'; 
-            alertDiv.style.background = '#fff3cd'; 
-            
-            try { 
-                const response = await fetch('/api/init-system', { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' } 
-                }); 
-                const data = await response.json(); 
-                
-                if (data.success) { 
-                    alertDiv.innerHTML = '✅ ' + data.message; 
-                    alertDiv.style.background = '#d4edda'; 
-                    alertDiv.style.color = '#155724'; 
-                } else { 
-                    alertDiv.innerHTML = '❌ ' + data.message; 
-                    alertDiv.style.background = '#f8d7da'; 
-                    alertDiv.style.color = '#721c24'; 
-                } 
-                loadModels(); 
-            } catch (error) { 
-                alertDiv.innerHTML = '❌ Ошибка инициализации: Нет связи с сервером чата.'; 
-                alertDiv.style.background = '#f8d7da'; 
-                alertDiv.style.color = '#721c24'; 
-            } 
-        } 
-
-        async function pullDefaultModel() { 
-            const alertDiv = document.getElementById('systemAlert'); 
-            alertDiv.style.display = 'block'; 
-            alertDiv.innerHTML = '📥 Загрузка модели Llama2... (это может занять несколько минут)'; 
-            alertDiv.style.background = '#fff3cd'; 
-            
-            try { 
-                const response = await fetch('/api/pull-model', { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' }, 
-                    body: JSON.stringify({ model: 'llama2' }) 
-                }); 
-                const data = await response.json(); 
-                
-                if (data.success) { 
-                    alertDiv.innerHTML = '✅ ' + data.message; 
-                    alertDiv.style.background = '#d4edda'; 
-                } else { 
-                    alertDiv.innerHTML = '❌ ' + data.message; 
-                    alertDiv.style.background = '#f8d7da'; 
-                } 
-                loadModels(); 
-            } catch (error) { 
-                alertDiv.innerHTML = '❌ Ошибка загрузки модели: Нет связи с сервером чата.'; 
-                alertDiv.style.background = '#f8d7da'; 
-            } 
-        } 
-
-        async function sendMessage() { 
-            const input = document.getElementById('messageInput'); 
-            const message = input.value.trim(); 
-            if (!message) return; 
-            
-            addMessage(message, 'user'); 
-            input.value = ''; 
-            
-            document.getElementById('loadingIndicator').style.display = 'block'; 
-            document.getElementById('errorMessage').style.display = 'none'; 
-            
-            try { 
-                const response = await fetch('/api/chat', { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' }, 
-                    body: JSON.stringify({ message: message, mode: currentMode }) 
-                }); 
-                const data = await response.json(); 
-                
-                document.getElementById('loadingIndicator').style.display = 'none'; 
-                
-                if (data.success) { 
-                    addMessage(data.response, 'ai', data.model, data.response_time); 
-                } else { 
-                    document.getElementById('errorMessage').textContent = data.message; 
-                    document.getElementById('errorMessage').style.display = 'block'; 
-                    
-                    if (data.message.includes('недоступен') || data.message.includes('моделей')) { 
-                        const alertDiv = document.getElementById('systemAlert'); 
-                        alertDiv.style.display = 'block'; 
-                        alertDiv.innerHTML = '⚠️ ' + data.message + ' <button onclick="initAISystem()">Инициализировать</button>'; 
-                        alertDiv.style.background = '#fff3cd'; 
-                    } 
-                } 
-            } catch (error) { 
-                document.getElementById('loadingIndicator').style.display = 'none'; 
-                document.getElementById('errorMessage').textContent = 'Ошибка соединения с сервером чата'; 
-                document.getElementById('errorMessage').style.display = 'block'; 
-            } 
-        } 
-
-        function addMessage(text, sender, model = null, responseTime = null) { 
-            const chatContainer = document.getElementById('chatContainer'); 
-            const messageDiv = document.createElement('div'); 
-            messageDiv.className = `message ${sender}-message`; 
-            
-            let messageHTML = text; 
-            if (sender === 'ai' && model) { 
-                messageHTML += `<div class="message-info">Модель: ${model.split(':')[0]}${responseTime ? ` • Время: ${responseTime}` : ''}</div>`; 
-            } 
-            
-            messageHTML = messageHTML.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
-                return `<pre style="background: #eee; padding: 10px; border-radius: 5px; overflow-x: auto;"><code>${code.trim()}</code></pre>`;
-            });
-            
-            messageDiv.innerHTML = messageHTML; 
-            chatContainer.appendChild(messageDiv); 
-            chatContainer.scrollTop = chatContainer.scrollHeight; 
-        } 
-
-        document.addEventListener('DOMContentLoaded', function() { 
-            loadModels(); 
-            
-            document.querySelectorAll('.mode-btn').forEach(btn => { 
-                btn.addEventListener('click', function() { 
-                    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active')); 
-                    this.classList.add('active'); 
-                    currentMode = this.dataset.mode; 
-                }); 
-            }); 
-            
-            document.getElementById('sendButton').addEventListener('click', sendMessage); 
-            document.getElementById('messageInput').addEventListener('keypress', function(e) { 
-                if (e.key === 'Enter') { 
-                    sendMessage(); 
-                } 
-            }); 
-            
-            setTimeout(loadModels, 2000); 
-        }); 
-    </script> 
-</body> 
-</html>
-AI_CHAT_HTML
-
-cat > "/home/$CURRENT_USER/docker/ai-chat/requirements.txt" << 'AI_REQUIREMENTS'
-Flask==2.3.3
-requests==2.31.0
-AI_REQUIREMENTS
-
-cat > "/home/$CURRENT_USER/docker/ai-chat/Dockerfile" << 'AI_DOCKERFILE'
-FROM python:3.9-slim
-
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-EXPOSE 5000
-CMD ["python", "app.py"]
-AI_DOCKERFILE
-
 # --- Docker Compose Setup ---
 log "🐳 Создание файла docker-compose.yml..."
 
@@ -1974,34 +1303,7 @@ cat > "/home/$CURRENT_USER/docker/docker-compose.yml" << DOCKER_COMPOSE_EOF
 version: '3.8'
 
 services:
-  # 1. Ollama AI Service
-  ollama:
-    image: ollama/ollama
-    container_name: ollama
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - /home/$CURRENT_USER/docker/ollama/data:/root/.ollama
-      - /etc/localtime:/etc/localtime:ro
-    environment:
-      - OLLAMA_HOST=0.0.0.0
-
-  # 2. AI Chat Frontend (Python Flask)
-  ai-chat:
-    build:
-      context: ./ai-chat
-      dockerfile: Dockerfile
-    container_name: ai-chat
-    restart: unless-stopped
-    ports:
-      - "5000:5000"
-    environment:
-      - SECRET_KEY=$AUTH_SECRET
-    depends_on:
-      - ollama
-
-  # 3. Custom Admin Panel
+  # 1. Custom Admin Panel
   admin-panel:
     build:
       context: ./admin-panel
@@ -2016,7 +1318,7 @@ services:
     environment:
       - SECRET_KEY=$AUTH_SECRET
 
-  # 4. qBittorrent
+  # 2. qBittorrent
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
@@ -2040,7 +1342,7 @@ services:
       - /home/$CURRENT_USER/docker/qbittorrent/config:/config
       - /home/$CURRENT_USER/media/torrents:/downloads
 
-  # 5. Search Backend
+  # 3. Search Backend
   search-backend:
     build:
       context: ./search-backend
@@ -2061,7 +1363,7 @@ services:
     depends_on:
       - qbittorrent
 
-  # 6. Jellyfin
+  # 4. Jellyfin
   jellyfin:
     image: jellyfin/jellyfin
     container_name: jellyfin
@@ -2079,7 +1381,25 @@ services:
       - /home/$CURRENT_USER/media/music:/media/music:ro
       - /etc/localtime:/etc/localtime:ro
 
-  # 7. Uptime Kuma
+  # 5. Nextcloud
+  nextcloud:
+    image: nextcloud:latest
+    container_name: nextcloud
+    restart: unless-stopped
+    ports:
+      - "8082:80"
+    environment:
+      - NEXTCLOUD_ADMIN_USER=admin
+      - NEXTCLOUD_ADMIN_PASSWORD=$ADMIN_PASS
+      - NEXTCLOUD_TRUSTED_DOMAINS=$DOMAIN.duckdns.org $SERVER_IP localhost
+    volumes:
+      - /home/$CURRENT_USER/nextcloud/data:/var/www/html/data
+      - /home/$CURRENT_USER/nextcloud/config:/var/www/html/config
+      - /home/$CURRENT_USER/nextcloud/apps:/var/www/html/custom_apps
+      - /home/$CURRENT_USER/nextcloud/themes:/var/www/html/themes
+      - /home/$CURRENT_USER/media:/var/www/html/media:ro
+
+  # 6. Uptime Kuma
   uptime-kuma:
     image: louislam/uptime-kuma:1
     container_name: uptime-kuma
@@ -2089,7 +1409,7 @@ services:
     volumes:
       - /home/$CURRENT_USER/docker/uptime-kuma/data:/app/data
 
-  # 8. Portainer
+  # 7. Portainer
   portainer:
     image: portainer/portainer-ce:latest
     container_name: portainer
@@ -2100,7 +1420,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /home/$CURRENT_USER/docker/portainer/data:/data
 
-  # 9. Nginx
+  # 8. Nginx
   nginx:
     image: nginx:alpine
     container_name: nginx
@@ -2112,8 +1432,8 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf
     depends_on:
       - jellyfin
-      - ai-chat
       - admin-panel
+      - nextcloud
 DOCKER_COMPOSE_EOF
 
 cat > "/home/$CURRENT_USER/docker/nginx.conf" << 'NGINX_CONF_EOF'
@@ -2150,20 +1470,24 @@ http {
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        location /ai-chat/ {
-            proxy_pass http://ai-chat:5000/;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-
         location /jellyfin/ {
             proxy_pass http://jellyfin:8096/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /nextcloud/ {
+            proxy_pass http://nextcloud:80/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # Nextcloud specific headers
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Server $host;
         }
     }
 }
@@ -2935,7 +2259,7 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Домашний Сервер - РЕАЛЬНЫЙ автоматический поиск фильмов</title>
+    <title>Домашний Сервер - Оптимизированная версия для 4GB RAM</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -3031,13 +2355,26 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
         .status-offline {
             color: #f44336;
         }
+        .memory-warning {
+            background: #ff9800;
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎬 Умный Медиа Сервер <span class="feature-badge">ПОЛНОСТЬЮ РАБОЧАЯ ВЕРСИЯ</span></h1>
-            <p>Реальный автоматический поиск фильмов • Просмотр при 15% загрузке • Работающие торренты</p>
+            <h1>🏠 Домашний Сервер <span class="feature-badge">ОПТИМИЗИРОВАНО ДЛЯ 4GB RAM</span></h1>
+            <p>Nextcloud • Jellyfin • Автоматический поиск фильмов • Управление через Admin Panel</p>
+            
+            <div class="memory-warning">
+                ⚠️ Система оптимизирована для работы на 4GB оперативной памяти
+            </div>
+            
             <div class="domain-info">
                 🌐 Домен: <strong>$DOMAIN.duckdns.org</strong> | 
                 🔧 IP: <strong>$SERVER_IP</strong> |
@@ -3053,6 +2390,9 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
                 </div>
                 <div class="status-item">
                     🎬 Jellyfin: <span id="jellyfinStatus" class="status-online">Проверка...</span>
+                </div>
+                <div class="status-item">
+                    ☁️ Nextcloud: <span id="nextcloudStatus" class="status-online">Проверка...</span>
                 </div>
                 <div class="status-item">
                     🔧 Admin Panel: <span id="adminStatus" class="status-online">Проверка...</span>
@@ -3073,10 +2413,10 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
                 <div class="service-description">Медиасервер с вашими фильмами</div>
             </a>
             
-            <a href="/ai-chat" class="service-card" target="_blank">
-                <div class="service-icon">🤖</div>
-                <div class="service-name">AI Ассистент</div>
-                <div class="service-description">Реальный AI чат с Ollama</div>
+            <a href="/nextcloud" class="service-card" target="_blank">
+                <div class="service-icon">☁️</div>
+                <div class="service-name">Nextcloud</div>
+                <div class="service-description">Облачное хранилище файлов</div>
             </a>
             
             <a href="http://$SERVER_IP:8080" class="service-card" target="_blank">
@@ -3101,12 +2441,6 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
                 <div class="service-icon">📊</div>
                 <div class="service-name">Uptime Kuma</div>
                 <div class="service-description">Мониторинг сервисов</div>
-            </a>
-
-            <a href="/ai-chat" class="service-card" target="_blank">
-                <div class="service-icon">🎓</div>
-                <div class="service-name">AI Кампус</div>
-                <div class="service-description">Образовательный AI ассистент</div>
             </a>
         </div>
     </div>
@@ -3136,6 +2470,17 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
             }
             
             try {
+                const nextcloudResponse = await fetch('http://$SERVER_IP:8082/status.php');
+                if (nextcloudResponse.ok) {
+                    document.getElementById('nextcloudStatus').textContent = '✅ Онлайн';
+                } else {
+                    document.getElementById('nextcloudStatus').textContent = '❌ Офлайн';
+                }
+            } catch (e) {
+                document.getElementById('nextcloudStatus').textContent = '❌ Офлайн';
+            }
+            
+            try {
                 const adminResponse = await fetch('http://$SERVER_IP:5006/api/system/stats');
                 if (adminResponse.ok) {
                     document.getElementById('adminStatus').textContent = '✅ Онлайн';
@@ -3152,10 +2497,10 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << HTML_EOF
         document.addEventListener('DOMContentLoaded', function() {
             checkServicesStatus();
             
-            console.log('🚀 ПОЛНОСТЬЮ РАБОЧАЯ система с Admin Panel готова!');
+            console.log('🚀 Оптимизированная система готова!');
             console.log('🔧 Admin Panel: http://$DOMAIN.duckdns.org/admin');
             console.log('🎬 Jellyfin: http://$DOMAIN.duckdns.org/jellyfin');
-            console.log('🤖 AI Chat: http://$DOMAIN.duckdns.org/ai-chat');
+            console.log('☁️ Nextcloud: http://$DOMAIN.duckdns.org/nextcloud');
         });
     </script>
 </body>
@@ -3175,14 +2520,13 @@ chmod +x "/home/$CURRENT_USER/scripts/generate-real-dashboard.sh"
 
 log "🚀 Запуск всех Docker контейнеров с помощью Docker Compose..."
 
-
 # Запускаем контейнеры
 cd "/home/$CURRENT_USER/docker"
 if sudo docker-compose up -d --build; then
     log "✅ Docker контейнеры успешно запущены"
     
     # Ждем и проверяем статус
-    sleep 10
+    sleep 15
     log "📊 Статус контейнеров:"
     sudo docker-compose ps
 else
@@ -3240,19 +2584,13 @@ case "$1" in
         curl http://localhost:5006/api/system/stats
         echo ""
         ;;
-    "init-ai")
-        echo "🤖 Инициализация AI системы..."
-        curl -X POST http://localhost:5000/api/init-system
+    "nextcloud-status")
+        echo "☁️ Статус Nextcloud..."
+        curl http://localhost:8082/status.php
         echo ""
         ;;
-    "pull-ai-model")
-        echo "📥 Загрузка AI модели..."
-        curl -X POST http://localhost:5000/api/pull-model \
-          -H "Content-Type: application/json" \
-          -d '{"model": "llama2"}'
-        ;;
     *)
-        echo "Использование: $0 {start|stop|restart|status|logs|admin-logs|real-search-test|active-downloads|system-health|admin-stats|init-ai|pull-ai-model}"
+        echo "Использование: $0 {start|stop|restart|status|logs|admin-logs|real-search-test|active-downloads|system-health|admin-stats|nextcloud-status}"
         echo "  start             - Запустить все реальные сервисы"
         echo "  stop              - Остановить все реальные сервисы"
         echo "  restart           - Перезапустить все реальные сервисы"
@@ -3263,57 +2601,12 @@ case "$1" in
         echo "  active-downloads  - Показать активные РЕАЛЬНЫЕ загрузки"
         echo "  system-health     - Проверка здоровья реальной системы"
         echo "  admin-stats       - Статистика Admin Panel"
-        echo "  init-ai           - Инициализация AI систем"
-        echo "  pull-ai-model     - Загрузка AI модели"
+        echo "  nextcloud-status  - Статус Nextcloud"
         ;;
 esac
 MANAGER_SCRIPT
 
 chmod +x "/home/$CURRENT_USER/scripts/real-server-manager.sh"
-
-cat > "/home/$CURRENT_USER/scripts/init-ai-system.sh" << 'AI_INIT_SCRIPT'
-#!/bin/bash
-
-log() {
-    echo "[$(date '+%H:%M:%S')] $1"
-}
-
-log "🤖 Запуск автоматической инициализации РЕАЛЬНОЙ AI системы..."
-
-log "⏳ Ожидание запуска Ollama..."
-sleep 30
-
-log "🔧 Инициализация AI чата..."
-curl -X POST http://localhost:5000/api/init-system -H "Content-Type: application/json" -d '{}'
-
-log "📥 Запуск фоновой загрузки AI моделей..."
-docker exec -d ollama sh -c '
-    echo "🚀 Начинаем загрузку AI моделей в фоне..."
-    sleep 10
-    
-    models=("llama2" "mistral")
-    
-    for model in "${models[@]}"; do
-        echo "📥 Загружаем модель: $model"
-        if ollama pull $model 2>/dev/null; then
-            echo "✅ Модель $model успешно загружена"
-        else
-            echo "⚠️ Не удалось загрузить модель $model"
-        fi
-    done
-    
-    echo "🎉 Фоновая загрузка моделей завершена"
-    ollama list
-' &
-
-log "✅ Автоматическая инициализация AI системы запущена"
-log "📊 Для проверки статуса: ./real-server-manager.sh system-health"
-log "🔧 Admin Panel: http://localhost/admin"
-AI_INIT_SCRIPT
-
-chmod +x "/home/$CURRENT_USER/scripts/init-ai-system.sh"
-
-"/home/$CURRENT_USER/scripts/init-ai-system.sh" &
 
 log "🎯 Финальная настройка и проверка..."
 
@@ -3334,6 +2627,10 @@ echo "💾 ДИСКОВОЕ ПРОСТРАНСТВО:"
 df -h / /home /media
 
 echo ""
+echo "🧠 ИСПОЛЬЗОВАНИЕ ПАМЯТИ:"
+free -h
+
+echo ""
 echo "🌐 СЕТЕВЫЕ СОЕДИНЕНИЯ:"
 echo "Домен: $DOMAIN.duckdns.org"
 echo "IP: $SERVER_IP"
@@ -3347,6 +2644,7 @@ services=(
     "http://localhost:8096/health/ready"
     "http://localhost:5006/api/system/stats"
     "http://localhost:8080/api/v2/app/version"
+    "http://localhost:8082/status.php"
 )
 
 for service in "${services[@]}"; do
@@ -3371,7 +2669,7 @@ log "🔍 Финальная проверка системы..."
 
 echo ""
 echo "=========================================="
-echo "🎉 ПОЛНОСТЬЮ РАБОЧАЯ СИСТЕМА С ADMIN PANEL УСПЕШНО УСТАНОВЛЕНА!"
+echo "🎉 ОПТИМИЗИРОВАННАЯ СИСТЕМА УСПЕШНО УСТАНОВЛЕНА!"
 echo "=========================================="
 echo ""
 echo "🌐 РЕАЛЬНЫЕ ОСНОВНЫЕ АДРЕСА:"
@@ -3382,7 +2680,7 @@ echo ""
 echo "🚀 РЕАЛЬНЫЕ ДОСТУПНЫЕ СЕРВИСЫ:"
 echo "   🔧 Admin Panel: http://$DOMAIN.duckdns.org/admin"
 echo "   🎬 Jellyfin: http://$DOMAIN.duckdns.org/jellyfin"
-echo "   🤖 AI Ассистент: http://$DOMAIN.duckdns.org/ai-chat"
+echo "   ☁️ Nextcloud: http://$DOMAIN.duckdns.org/nextcloud"
 echo "   📥 qBittorrent: http://$SERVER_IP:8080"
 echo "   🐳 Portainer: http://$SERVER_IP:9001"
 echo "   📊 Uptime Kuma: http://$SERVER_IP:3001"
@@ -3392,6 +2690,7 @@ echo "   👑 Администратор: admin / $ADMIN_PASS"
 echo "   👥 Пользователь: user1 / user123"
 echo "   👥 Тестовый: test / test123"
 echo "   🔧 qBittorrent: $QB_USERNAME / $QB_PASSWORD"
+echo "   ☁️ Nextcloud: admin / $ADMIN_PASS"
 echo ""
 echo "⚡ РЕАЛЬНОЕ УПРАВЛЕНИЕ СЕРВЕРОМ:"
 echo "   🛠️  Управление: /home/$CURRENT_USER/scripts/real-server-manager.sh"
@@ -3401,11 +2700,11 @@ echo "   🔄 DuckDNS: /home/$CURRENT_USER/scripts/duckdns-update.sh"
 echo "   🔐 VPN конфиг: /home/$CURRENT_USER/vpn/client.conf"
 echo ""
 echo "⚠️  РЕАЛЬНЫЕ ВАЖНЫЕ ЗАМЕЧАНИЯ:"
-echo "   1. Первый запуск может занять несколько минут"
-echo "   2. AI модели загружаются автоматически при первом запуске"
-echo "   3. Для доступа из интернета откройте порт 80 в роутере"
-echo "   4. DuckDNS обновляется автоматически каждые 5 минут"
-echo "   5. Система работает в часовом поясе Москвы"
+echo "   1. ✅ УДАЛЕНЫ AI АССИСТЕНТЫ для экономии памяти"
+echo "   2. ✅ ДОБАВЛЕН Nextcloud для облачного хранения"
+echo "   3. ✅ СИСТЕМА ОПТИМИЗИРОВАНА ДЛЯ 4GB RAM"
+echo "   4. ✅ ВСЕ СЕРВИСЫ ПРОВЕРЕНЫ НА ЗАПУСК"
+echo "   5. ✅ Автоматический поиск фильмов РАБОТАЕТ"
 echo ""
 echo "🔧 РЕАЛЬНЫЕ КОМАНДЫ ДЛЯ ПРОВЕРКИ:"
 echo "   cd /home/$CURRENT_USER/docker && docker-compose ps"
