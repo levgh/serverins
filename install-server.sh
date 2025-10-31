@@ -2,6 +2,10 @@
 # --- GLOBAL CONFIGURATION AND UTILITIES ---
 
 set -e
+cleanup_temp() {
+    rm -rf /tmp/install_*
+}
+trap cleanup_temp EXIT
 trap 'rollback' ERR
 trap 'cleanup' EXIT
 
@@ -141,22 +145,15 @@ echo "=========================================="
 
 get_interface() {
     local interface
-    interface=$(ip route | awk '/default/ {print \$5}' | head -1)
+    # Простой способ определения интерфейса
+    interface=$(ip route | awk '/default/ {print $5}' | head -1)
     
     if [ -z "$interface" ]; then
-        interface=$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo | head -1)
+        interface=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | head -1)
     fi
     
     if [ -z "$interface" ]; then
-        for iface in /sys/class/net/*; do
-            iface_name=$(basename "$iface")
-            if [ "$iface_name" != "lo" ] && [ -f "/sys/class/net/$iface_name/operstate" ]; then
-                if [ "$(cat "/sys/class/net/$iface_name/operstate")" = "up" ] 2>/dev/null; then
-                    interface="$iface_name"
-                    break
-                fi
-            fi
-        done
+        interface="eth0"
     fi
     
     echo "$interface"
@@ -166,17 +163,16 @@ check_disk_space() {
     local required_gb=30
     local available_kb available_gb
     
-    available_kb=$(df -k / | awk 'NR==2 {print \$4}')
+    available_kb=$(df -k / | awk 'NR==2 {print $4}')
     
-    if command -v bc &> /dev/null; then
-        available_gb=$(echo "scale=1; $available_kb / 1024 / 1024" | bc 2>/dev/null || echo "0")
-    else
-        available_gb=$(echo "$available_kb" | awk '{printf "%.1f", \$1/1024/1024}')
-    fi
-
-    if (( $(echo "$available_gb < $required_gb" | bc -l 2>/dev/null || echo "1") )); then
+    # Простая проверка без bc
+    available_gb=$((available_kb / 1024 / 1024))
+    
+    if [ "$available_gb" -lt "$required_gb" ]; then
         log "❌ Недостаточно места на диске. Доступно: ${available_gb}GB, требуется: ${required_gb}GB"
         exit 1
+    else
+        log "✅ Достаточно места на диске: ${available_gb}GB"
     fi
 }
 
@@ -262,8 +258,8 @@ except ImportError:
 }
 
 # ВЫЗЫВАЕМ ФУНКЦИИ ПРОВЕРКИ
-TOTAL_MEM=$(free -g | grep Mem: | awk '{print $2}')
-if [ "$TOTAL_MEM" -lt 2 ]; then
+TOTAL_MEM=$(free -g | grep Mem: | awk '{print $2}' | head -1)
+if [ -n "$TOTAL_MEM" ] && [ "$TOTAL_MEM" -lt 2 ]; then
     log "⚠️  ВНИМАНИЕ: Мало оперативной памяти (${TOTAL_MEM}GB). Рекомендуется минимум 2GB"
     read -p "Продолжить установку? (y/N): " -n 1 -r
     echo
