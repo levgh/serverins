@@ -2672,11 +2672,6 @@ echo "   2. ✅ ДОБАВЛЕН Nextcloud для облачного хране�
 echo "   3. ✅ СИСТЕМА ОПТИМИЗИРОВАНА ДЛЯ 4GB RAM"
 echo "   4. ✅ ВСЕ СЕРВИСЫ ПРОВЕРЕНЫ НА ЗАПУСК"
 echo "   5. ✅ Автоматический поиск фильмов РАБОТАЕТ"
-echo ""
-echo "🔧 РЕАЛЬНЫЕ КОМАНДЫ ДЛЯ ПРОВЕРКИ:"
-echo "   cd /home/$CURRENT_USER/docker && docker-compose ps"
-echo "   sudo systemctl status wg-quick@wg0"
-echo "   tail -f /home/$CURRENT_USER/install.log"
-echo "   ./real-system-monitor.sh"
-echo "   ./real-server-manager.sh admin-stats"
+SCRIPT
+
 
