@@ -6,7 +6,7 @@ echo "🔧 СОЗДАНИЕ ИСПРАВЛЕННОЙ ВЕРСИИ СКРИПТА
 echo "=========================================="
 
 # Создаем исправленный скрипт с автоматическими значениями
-cat > /tmp/fixed-server-install.sh << 'FIXED_SCRIPT'
+cat > /tmp/fixed-server-install.sh 
 #!/bin/bash
 
 # --- GLOBAL CONFIGURATION AND UTILITIES ---
