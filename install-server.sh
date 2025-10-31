@@ -5,26 +5,29 @@ set -e
 trap 'rollback' ERR
 trap 'cleanup' EXIT
 
+CURRENT_USER=$(whoami)
+SERVER_IP=$(hostname -I | awk '{print $1}')
+
 log() {
-    if [ ! -f "/home/\$CURRENT_USER/install.log" ]; then
-        mkdir -p "/home/\$CURRENT_USER"
-        touch "/home/\$CURRENT_USER/install.log"
-        chmod 600 "/home/\$CURRENT_USER/install.log"
+    if [ ! -f "/home/$CURRENT_USER/install.log" ]; then
+        mkdir -p "/home/$CURRENT_USER"
+        touch "/home/$CURRENT_USER/install.log"
+        chmod 600 "/home/$CURRENT_USER/install.log"
     fi
-    echo "[\$(date '+%H:%M:%S')] \$1" | tee -a "/home/\$CURRENT_USER/install.log"
+    echo "[$(date '+%H:%M:%S')] $1" | tee -a "/home/$CURRENT_USER/install.log"
 }
 
 rollback() {
-    local exit_code=\$?
-    log "🔄 Выполняется откат изменений (код ошибки: \$exit_code)..."
+    local exit_code=$?
+    log "🔄 Выполняется откат изменений (код ошибки: $exit_code)..."
     
-    cd "/home/\$CURRENT_USER/docker" 2>/dev/null && sudo docker-compose down 2>/dev/null || true
+    cd "/home/$CURRENT_USER/docker" 2>/dev/null && sudo docker-compose down 2>/dev/null || true
     
     sudo systemctl stop wg-quick@wg0 2>/dev/null || true
     sudo systemctl disable wg-quick@wg0 2>/dev/null || true
     
     log "⚠️  Установка прервана. Часть сервисов может быть не настроена."
-    exit \$exit_code
+    exit $exit_code
 }
 
 cleanup() {
@@ -33,131 +36,146 @@ cleanup() {
 }
 
 execute_command() {
-    local cmd="\$1"
-    local description="\$2"
+    local cmd="$1"
+    local description="$2"
     
-    log "Выполняется: \$description"
-    if eval "\$cmd" >> "/home/\$CURRENT_USER/install.log" 2>&1; then
-        log "✅ Успешно: \$description"
+    log "Выполняется: $description"
+    if eval "$cmd" >> "/home/$CURRENT_USER/install.log" 2>&1; then
+        log "✅ Успешно: $description"
         return 0
     else
-        log "❌ Ошибка: \$description"
+        log "❌ Ошибка: $description"
         return 1
     fi
 }
 
 # --- AUTOMATIC CONFIGURATION ---
-CURRENT_USER=\$(whoami)
-SERVER_IP=\$(hostname -I | awk '{print \$1}')
 
 # АВТОМАТИЧЕСКИЕ ЗНАЧЕНИЯ
 DOMAIN="domenforserver123"
 TOKEN="7c4ac80c-d14f-4ca6-ae8c-df2b04a939ae"
-ADMIN_PASS="admin"
+ADMIN_PASS="admin123"
 
 echo "=========================================="
 echo "🔧 АВТОМАТИЧЕСКАЯ НАСТРОЙКА"
 echo "=========================================="
-echo "Домен: \$DOMAIN"
+echo "Домен: $DOMAIN"
 echo "Токен: ***"
-echo "Пользователь: \$CURRENT_USER"
-echo "IP сервера: \$SERVER_IP"
+echo "Пользователь: $CURRENT_USER"
+echo "IP сервера: $SERVER_IP"
 
 generate_qbittorrent_credentials() {
-    local config_dir="/home/\$CURRENT_USER/.config"
-    local creds_file="\$config_dir/qbittorrent.creds"
+    local config_dir="/home/$CURRENT_USER/.config"
+    local creds_file="$config_dir/qbittorrent.creds"
+    mkdir -p "$config_dir"
     
-    # ВСЕГДА генерируем новые credentials - простая логика
-    QB_USERNAME="qbittorrent_\$(openssl rand -hex 4)"
-    QB_PASSWORD=\$(openssl rand -hex 16)
+    QB_USERNAME="qbittorrent_$(openssl rand -hex 4)"
+    QB_PASSWORD=$(openssl rand -hex 16)
     
-    cat > "\$creds_file" << QB_CREDS
+    cat > "$creds_file" << QB_CREDS
 {
-    "username": "\$QB_USERNAME",
-    "password": "\$QB_PASSWORD"
+    "username": "$QB_USERNAME",
+    "password": "$QB_PASSWORD"
 }
 QB_CREDS
     
-    chmod 600 "\$creds_file"
+    chmod 600 "$creds_file"
     log "✅ Сгенерированы безопасные учетные данные qBittorrent"
     
     export QB_USERNAME QB_PASSWORD
 }
 
 generate_auth_secret() {
-    local secret_file="/home/\$CURRENT_USER/.config/auth_secret"
+    local secret_file="/home/$CURRENT_USER/.config/auth_secret"
+    mkdir -p "/home/$CURRENT_USER/.config"
     
-    if [ ! -f "\$secret_file" ]; then
-        AUTH_SECRET=\$(openssl rand -hex 32)
-        echo "\$AUTH_SECRET" > "\$secret_file"
-        chmod 600 "\$secret_file"
+    if [ ! -f "$secret_file" ]; then
+        AUTH_SECRET=$(openssl rand -hex 32)
+        echo "$AUTH_SECRET" > "$secret_file"
+        chmod 600 "$secret_file"
         log "✅ Сгенерирован новый секретный ключ аутентификации"
     else
-        AUTH_SECRET=\$(cat "\$secret_file")
+        AUTH_SECRET=$(cat "$secret_file")
         log "✅ Загружен существующий секретный ключ аутентификации"
     fi
     
     export AUTH_SECRET
 }
 
-# ПРОПУСКАЕМ ИНТЕРАКТИВНЫЙ ВВОД - используем автоматические значения
+generate_jellyfin_api_key() {
+    local api_file="/home/$CURRENT_USER/.config/jellyfin_api"
+    mkdir -p "/home/$CURRENT_USER/.config"
+    
+    JELLYFIN_API_KEY=$(openssl rand -hex 32)
+    echo "$JELLYFIN_API_KEY" > "$api_file"
+    chmod 600 "$api_file"
+    log "✅ Сгенерирован API ключ для Jellyfin"
+    
+    export JELLYFIN_API_KEY
+}
 
-mkdir -p "/home/\$CURRENT_USER/.config"
-cat > "/home/\$CURRENT_USER/.config/server_env" << CONFIG_EOF
-DOMAIN="\$DOMAIN"
-TOKEN="\$TOKEN"
-ADMIN_PASS="\$ADMIN_PASS"
-SERVER_IP="\$SERVER_IP"
-CURRENT_USER="\$CURRENT_USER"
-QB_USERNAME="\$QB_USERNAME"
-QB_PASSWORD="\$QB_PASSWORD"
-AUTH_SECRET="\$AUTH_SECRET"
+# ВЫЗОВ ФУНКЦИЙ ГЕНЕРАЦИИ
+generate_qbittorrent_credentials
+generate_auth_secret
+generate_jellyfin_api_key
+
+mkdir -p "/home/$CURRENT_USER/.config"
+cat > "/home/$CURRENT_USER/.config/server_env" << CONFIG_EOF
+DOMAIN="$DOMAIN"
+TOKEN="$TOKEN"
+ADMIN_PASS="$ADMIN_PASS"
+SERVER_IP="$SERVER_IP"
+CURRENT_USER="$CURRENT_USER"
+QB_USERNAME="$QB_USERNAME"
+QB_PASSWORD="$QB_PASSWORD"
+AUTH_SECRET="$AUTH_SECRET"
+JELLYFIN_API_KEY="$JELLYFIN_API_KEY"
+VPN_PORT="51820"
 CONFIG_EOF
 
-chmod 600 "/home/\$CURRENT_USER/.config/server_env"
+chmod 600 "/home/$CURRENT_USER/.config/server_env"
 
 echo "=========================================="
 echo "🚀 УСТАНОВКА СИСТЕМЫ"
 echo "=========================================="
 
-# ОСТАЛЬНАЯ ЧАСТЬ СКРИПТА БЕЗ ИЗМЕНЕНИЙ
 get_interface() {
     local interface
-    interface=\$(ip route | awk '/default/ {print \$5}' | head -1)
+    interface=$(ip route | awk '/default/ {print \$5}' | head -1)
     
-    if [ -z "\$interface" ]; then
-        interface=\$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo | head -1)
+    if [ -z "$interface" ]; then
+        interface=$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo | head -1)
     fi
     
-    if [ -z "\$interface" ]; then
+    if [ -z "$interface" ]; then
         for iface in /sys/class/net/*; do
-            iface_name=\$(basename "\$iface")
-            if [ "\$iface_name" != "lo" ] && [ -f "/sys/class/net/\$iface_name/operstate" ]; then
-                if [ "\$(cat "/sys/class/net/\$iface_name/operstate")" = "up" ] 2>/dev/null; then
-                    interface="\$iface_name"
+            iface_name=$(basename "$iface")
+            if [ "$iface_name" != "lo" ] && [ -f "/sys/class/net/$iface_name/operstate" ]; then
+                if [ "$(cat "/sys/class/net/$iface_name/operstate")" = "up" ] 2>/dev/null; then
+                    interface="$iface_name"
                     break
                 fi
             fi
         done
     fi
     
-    echo "\$interface"
+    echo "$interface"
 }
 
 check_disk_space() {
     local required_gb=30
     local available_kb available_gb
     
-    available_kb=\$(df -k / | awk 'NR==2 {print \$4}')
+    available_kb=$(df -k / | awk 'NR==2 {print \$4}')
     
     if command -v bc &> /dev/null; then
-        available_gb=\$(echo "scale=1; \$available_kb / 1024 / 1024" | bc 2>/dev/null || echo "0")
+        available_gb=$(echo "scale=1; $available_kb / 1024 / 1024" | bc 2>/dev/null || echo "0")
     else
-        available_gb=\$(echo "\$available_kb" | awk '{printf "%.1f", \$1/1024/1024}')
+        available_gb=$(echo "$available_kb" | awk '{printf "%.1f", \$1/1024/1024}')
     fi
 
-    if (( \$(echo "\$available_gb < \$required_gb" | bc -l 2>/dev/null || echo "1") )); then
-        log "❌ Недостаточно места на диске. Доступно: \${available_gb}GB, требуется: \${required_gb}GB"
+    if (( $(echo "$available_gb < $required_gb" | bc -l 2>/dev/null || echo "1") )); then
+        log "❌ Недостаточно места на диске. Доступно: ${available_gb}GB, требуется: ${required_gb}GB"
         exit 1
     fi
 }
@@ -166,12 +184,12 @@ check_required_commands() {
     local required_cmds=("curl" "wget" "git")
     local missing_cmds=()
     
-    for cmd in "\${required_cmds[@]}"; do
-        if ! command -v "\$cmd" &> /dev/null; then
-            missing_cmds+=("\$cmd")
-            log "⚠️ \$cmd не найдена, будет установлена"
+    for cmd in "${required_cmds[@]}"; do
+        if ! command -v "$cmd" &> /dev/null; then
+            missing_cmds+=("$cmd")
+            log "⚠️ $cmd не найдена, будет установлена"
         else
-            log "✅ \$cmd найдена"
+            log "✅ $cmd найдена"
         fi
     done
 }
@@ -180,11 +198,11 @@ check_python_dependencies() {
     log "🔍 Проверка Python зависимостей..."
     local required_packages=("bcrypt" "flask" "requests" "docker" "psutil")
     
-    for package in "\${required_packages[@]}"; do
-        if ! python3 -c "import \$package" 2>/dev/null; then
-            log "⚠️ \$package не найден, будет установлен"
+    for package in "${required_packages[@]}"; do
+        if ! python3 -c "import $package" 2>/dev/null; then
+            log "⚠️ $package не найден, будет установлен"
         else
-            log "✅ \$package найден"
+            log "✅ $package найден"
         fi
     done
 }
@@ -194,14 +212,14 @@ check_ports() {
     local conflict_found=0
     
     log "🔍 Проверка доступности портов..."
-    for port in "\${ports[@]}"; do
-        if ss -lntu | grep -q ":\${port}[[:space:]]"; then
-            log "❌ Порт \$port уже занят: \$(ss -lntu | grep ":\${port}[[:space:]]")"
+    for port in "${ports[@]}"; do
+        if ss -lntu | grep -q ":$port[[:space:]]"; then
+            log "❌ Порт $port уже занят: $(ss -lntu | grep ":$port[[:space:]]")"
             conflict_found=1
         fi
     done
     
-    if [ \$conflict_found -eq 1 ]; then
+    if [ $conflict_found -eq 1 ]; then
         log "⚠️  Освободите занятые порты или измените конфигурацию"
         return 1
     fi
@@ -230,30 +248,27 @@ install_docker_compose() {
 }
 
 hash_password() {
-    local password="\$1"
+    local password="$1"
     python3 -c "
 import sys
 try:
     import bcrypt
     salt = bcrypt.gensalt(rounds=12)
-    hashed = bcrypt.hashpw('\$password'.encode('utf-8'), salt)
+    hashed = bcrypt.hashpw('$password'.encode('utf-8'), salt)
     print(hashed.decode('utf-8'))
 except ImportError:
     import hashlib
-    print(hashlib.sha256('\$password'.encode()).hexdigest())
+    print(hashlib.sha256('$password'.encode()).hexdigest())
 " 
 }
 
-# ВЫЗЫВАЕМ ФУНКЦИИ
-generate_qbittorrent_credentials
-generate_auth_secret
-
-TOTAL_MEM=\$(free -g | grep Mem: | awk '{print \$2}')
-if [ "\$TOTAL_MEM" -lt 2 ]; then
-    log "⚠️  ВНИМАНИЕ: Мало оперативной памяти (\${TOTAL_MEM}GB). Рекомендуется минимум 2GB"
+# ВЫЗЫВАЕМ ФУНКЦИИ ПРОВЕРКИ
+TOTAL_MEM=$(free -g | grep Mem: | awk '{print $2}')
+if [ "$TOTAL_MEM" -lt 2 ]; then
+    log "⚠️  ВНИМАНИЕ: Мало оперативной памяти (${TOTAL_MEM}GB). Рекомендуется минимум 2GB"
     read -p "Продолжить установку? (y/N): " -n 1 -r
     echo
-    if [[ ! \$REPLY =~ ^[Yy]\$ ]]; then
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         exit 1
     fi
 fi
@@ -275,7 +290,7 @@ install_docker_compose
 log "🐳 Настройка Docker..."
 execute_command "sudo systemctl enable docker" "Включение Docker"
 execute_command "sudo systemctl start docker" "Запуск Docker"
-execute_command "sudo usermod -aG docker \$CURRENT_USER" "Добавление пользователя в группу docker"
+execute_command "sudo usermod -aG docker $CURRENT_USER" "Добавление пользователя в группу docker"
 
 # --- DuckDNS Setup ---
 log "🌐 Настройка DuckDNS..."
@@ -524,6 +539,7 @@ def load_users():
         return {"users": [], "sessions": {}, "login_attempts": {}}
 
 def save_users(data):
+    os.makedirs(os.path.dirname(USERS_FILE), exist_ok=True)
     with open(USERS_FILE, 'w') as f:
         json.dump(data, f, indent=2)
 
@@ -537,6 +553,7 @@ def log_audit(event_type, username, ip, details=""):
     }
     
     try:
+        os.makedirs(os.path.dirname(AUDIT_LOG), exist_ok=True)
         with open(AUDIT_LOG, 'a') as f:
             f.write(json.dumps(log_entry) + '\n')
     except Exception as e:
@@ -651,6 +668,18 @@ def user_profile():
         'prefix': session['user']['prefix'],
         'permissions': session['user']['permissions']
     })
+
+@app.route('/auth-validate')
+def auth_validate():
+    token = request.headers.get('X-Auth-Token')
+    if not token:
+        return jsonify({'error': 'No token'}), 401
+    
+    payload = verify_jwt_token(token)
+    if not payload:
+        return jsonify({'error': 'Invalid token'}), 401
+    
+    return jsonify(payload)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=False)
@@ -772,7 +801,7 @@ cat > "/home/$CURRENT_USER/auth-system/templates/login.html" << 'LOGIN_HTML_EOF'
         
         <div class="user-info">
             <p><strong>Тестовые пользователи:</strong></p>
-            <p>👑 Администратор: admin / ваш_пароль</p>
+            <p>👑 Администратор: admin / admin123</p>
             <p>👥 Пользователь: user1 / user123</p>
             <p>👥 Тестовый: test / test123</p>
         </div>
@@ -780,6 +809,184 @@ cat > "/home/$CURRENT_USER/auth-system/templates/login.html" << 'LOGIN_HTML_EOF'
 </body>
 </html>
 LOGIN_HTML_EOF
+
+cat > "/home/$CURRENT_USER/auth-system/templates/admin_dashboard.html" << 'ADMIN_DASHBOARD_EOF'
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Административная панель</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        .header {
+            background: rgba(255,255,255,0.1);
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .services-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+        .service-card {
+            background: linear-gradient(135deg, #00B4DB, #0083B0);
+            padding: 25px;
+            border-radius: 15px;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.3s;
+            color: white;
+            text-decoration: none;
+            display: block;
+        }
+        .service-card:hover {
+            transform: translateY(-5px);
+        }
+        .logout-btn {
+            background: #ff4757;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>👑 Административная панель</h1>
+        <p>Добро пожаловать, {{ user.username }}!</p>
+    </div>
+    
+    <div class="container">
+        <div class="services-grid">
+            <a href="/user/jellyfin/" class="service-card">
+                <div class="service-icon">🎬</div>
+                <div class="service-name">Jellyfin</div>
+                <div class="service-description">Медиасервер</div>
+            </a>
+            
+            <a href="/user/nextcloud/" class="service-card">
+                <div class="service-icon">☁️</div>
+                <div class="service-name">Nextcloud</div>
+                <div class="service-description">Облачное хранилище</div>
+            </a>
+            
+            <a href="http://localhost:9001" target="_blank" class="service-card">
+                <div class="service-icon">🐳</div>
+                <div class="service-name">Portainer</div>
+                <div class="service-description">Управление Docker</div>
+            </a>
+            
+            <a href="http://localhost:3001" target="_blank" class="service-card">
+                <div class="service-icon">📊</div>
+                <div class="service-name">Uptime Kuma</div>
+                <div class="service-description">Мониторинг</div>
+            </a>
+        </div>
+        
+        <button class="logout-btn" onclick="location.href='/logout'">Выйти</button>
+    </div>
+</body>
+</html>
+ADMIN_DASHBOARD_EOF
+
+cat > "/home/$CURRENT_USER/auth-system/templates/user_dashboard.html" << 'USER_DASHBOARD_EOF'
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Пользовательская панель</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        .header {
+            background: rgba(255,255,255,0.1);
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .services-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+        .service-card {
+            background: linear-gradient(135deg, #00B4DB, #0083B0);
+            padding: 25px;
+            border-radius: 15px;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.3s;
+            color: white;
+            text-decoration: none;
+            display: block;
+        }
+        .service-card:hover {
+            transform: translateY(-5px);
+        }
+        .logout-btn {
+            background: #ff4757;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>👥 Пользовательская панель</h1>
+        <p>Добро пожаловать, {{ user.username }}!</p>
+    </div>
+    
+    <div class="container">
+        <div class="services-grid">
+            <a href="/user/jellyfin/" class="service-card">
+                <div class="service-icon">🎬</div>
+                <div class="service-name">Jellyfin</div>
+                <div class="service-description">Медиасервер</div>
+            </a>
+            
+            <a href="/user/nextcloud/" class="service-card">
+                <div class="service-icon">☁️</div>
+                <div class="service-name">Nextcloud</div>
+                <div class="service-description">Облачное хранилище</div>
+            </a>
+        </div>
+        
+        <button class="logout-btn" onclick="location.href='/logout'">Выйти</button>
+    </div>
+</body>
+</html>
+USER_DASHBOARD_EOF
 
 # --- Folder Structure and Permissions ---
 log "📁 Создание структуры папок..."
@@ -870,7 +1077,7 @@ cat > "/home/$CURRENT_USER/data/users/users.json" << USERS_EOF
 }
 USERS_EOF
 
-cat > "/home/$CURRENT_USER/data/logs/audit.log" << 'AUDIT_EOF'
+cat > "/home/$CURRENT_USER/data/logs/audit.log" << AUDIT_EOF
 [
   {
     "timestamp": "$(date -Iseconds)",
@@ -901,61 +1108,42 @@ log() {
 
 log "🧹 Запуск автоматической очистки..."
 
-# Clean Jellyfin watched content (status > 99%)
-clean_jellyfin_watched() {
-    log "🎬 Очистка просмотренных фильмов в Jellyfin..."
-    
-    # Use Jellyfin API to get watched content and remove files
-    JELLYFIN_URL="http://localhost:8096"
-    API_KEY="$JELLYFIN_API_KEY"  # Set this in your environment
-    
-    if [ -n "$API_KEY" ]; then
-        # Get watched movies
-        WATCHED_MOVIES=$(curl -s -H "X-MediaBrowser-Token: $API_KEY" \
-            "$JELLYFIN_URL/Items?Recursive=true&IncludeItemTypes=Movie&Filters=IsPlayed" | jq -r '.Items[] | select(.UserData.PlayedPercentage > 99) | .Id' 2>/dev/null)
-        
-        for movie_id in $WATCHED_MOVIES; do
-            movie_info=$(curl -s -H "X-MediaBrowser-Token: $API_KEY" "$JELLYFIN_URL/Items/$movie_id")
-            movie_path=$(echo "$movie_info" | jq -r '.Path' 2>/dev/null)
-            
-            if [ -n "$movie_path" ] && [ -f "$movie_path" ]; then
-                log "🗑️ Удаление просмотренного фильма: $movie_path"
-                rm -f "$movie_path"
-            fi
-        done
-    fi
-}
-
 # Clean temporary files
 clean_temp_files() {
     log "📁 Очистка временных файлов..."
     
     # Clean Docker logs and temp files
-    sudo find /var/lib/docker/containers/ -name "*.log" -type f -mtime +7 -delete
+    sudo find /var/lib/docker/containers/ -name "*.log" -type f -mtime +7 -delete 2>/dev/null || true
     
     # Clean system temp files
-    sudo find /tmp -type f -atime +7 -delete
-    sudo find /var/tmp -type f -atime +7 -delete
+    sudo find /tmp -type f -atime +7 -delete 2>/dev/null || true
+    sudo find /var/tmp -type f -atime +7 -delete 2>/dev/null || true
     
     # Clean application temp files
-    find "/home/$CURRENT_USER/media/temp" -type f -mtime +3 -delete
-    find "/home/$CURRENT_USER/docker" -name "*.tmp" -type f -mtime +3 -delete
+    find "/home/$CURRENT_USER/media/temp" -type f -mtime +3 -delete 2>/dev/null || true
+    find "/home/$CURRENT_USER/docker" -name "*.tmp" -type f -mtime +3 -delete 2>/dev/null || true
     
     # Clean old logs
-    find "/home/$CURRENT_USER/data/logs" -name "*.log" -type f -mtime +30 -delete
+    find "/home/$CURRENT_USER/data/logs" -name "*.log" -type f -mtime +30 -delete 2>/dev/null || true
 }
 
 # Clean empty directories
 clean_empty_dirs() {
     log "📂 Очистка пустых директорий..."
-    find "/home/$CURRENT_USER/media" -type d -empty -mtime +30 -delete
-    find "/home/$CURRENT_USER/data" -type d -empty -mtime +30 -delete
+    find "/home/$CURRENT_USER/media" -type d -empty -mtime +30 -delete 2>/dev/null || true
+    find "/home/$CURRENT_USER/data" -type d -empty -mtime +30 -delete 2>/dev/null || true
+}
+
+# Clean old backups
+clean_old_backups() {
+    log "🗑️ Очистка старых бэкапов..."
+    find "/home/$CURRENT_USER/data/backups" -name "server_backup_*" -type d -mtime +30 -exec rm -rf {} \; 2>/dev/null || true
 }
 
 # Main cleanup execution
-clean_jellyfin_watched
 clean_temp_files
 clean_empty_dirs
+clean_old_backups
 
 log "✅ Автоматическая очистка завершена"
 CLEANUP_EOF
@@ -983,27 +1171,27 @@ create_backup() {
     # Backup Docker configurations
     tar -czf "$BACKUP_DIR/$BACKUP_NAME/docker_configs.tar.gz" \
         "/home/$CURRENT_USER/docker" \
-        "/home/$CURRENT_USER/.config" 2>/dev/null
+        "/home/$CURRENT_USER/.config" 2>/dev/null || true
     
     # Backup user data and authentication
     tar -czf "$BACKUP_DIR/$BACKUP_NAME/user_data.tar.gz" \
         "/home/$CURRENT_USER/data/users" \
-        "/home/$CURRENT_USER/auth-system" 2>/dev/null
+        "/home/$CURRENT_USER/auth-system" 2>/dev/null || true
     
     # Backup important service data
     tar -czf "$BACKUP_DIR/$BACKUP_NAME/service_data.tar.gz" \
         "/home/$CURRENT_USER/nextcloud/config" \
         "/home/$CURRENT_USER/docker/jellyfin/config" \
-        "/home/$CURRENT_USER/docker/qbittorrent/config" 2>/dev/null
+        "/home/$CURRENT_USER/docker/qbittorrent/config" 2>/dev/null || true
     
     # Backup VPN configurations
     tar -czf "$BACKUP_DIR/$BACKUP_NAME/vpn_configs.tar.gz" \
         "/home/$CURRENT_USER/vpn" \
-        "/etc/wireguard" 2>/dev/null
+        "/etc/wireguard" 2>/dev/null || true
     
     # Backup scripts
     tar -czf "$BACKUP_DIR/$BACKUP_NAME/scripts.tar.gz" \
-        "/home/$CURRENT_USER/scripts" 2>/dev/null
+        "/home/$CURRENT_USER/scripts" 2>/dev/null || true
     
     # Create backup manifest
     cat > "$BACKUP_DIR/$BACKUP_NAME/backup_manifest.json" << MANIFEST_EOF
@@ -1017,7 +1205,7 @@ create_backup() {
         "vpn_configs",
         "scripts"
     ],
-    "size": "$(du -sh $BACKUP_DIR/$BACKUP_NAME | cut -f1)"
+    "size": "$(du -sh $BACKUP_DIR/$BACKUP_NAME 2>/dev/null | cut -f1 || echo "unknown")"
 }
 MANIFEST_EOF
     
@@ -1026,7 +1214,7 @@ MANIFEST_EOF
 
 clean_old_backups() {
     log "🧹 Очистка старых бэкапов..."
-    find "$BACKUP_DIR" -name "server_backup_*" -type d -mtime +30 -exec rm -rf {} \; 2>/dev/null
+    find "$BACKUP_DIR" -name "server_backup_*" -type d -mtime +30 -exec rm -rf {} \; 2>/dev/null || true
 }
 
 # Execute backup
@@ -1047,11 +1235,11 @@ CRON_TEMP=$(mktemp)
 # Add existing DuckDNS cron
 echo "*/5 * * * * /bin/bash /home/$CURRENT_USER/scripts/duckdns-update.sh >/dev/null 2>&1" > "$CRON_TEMP"
 
-# Add auto-cleanup at 00:00 Perm time (21:00 UTC for Perm timezone)
-echo "0 21 * * * /bin/bash /home/$CURRENT_USER/scripts/auto-cleanup/cleanup.sh >/dev/null 2>&1" >> "$CRON_TEMP"
+# Add auto-cleanup at 02:00 daily
+echo "0 2 * * * /bin/bash /home/$CURRENT_USER/scripts/auto-cleanup/cleanup.sh >/dev/null 2>&1" >> "$CRON_TEMP"
 
-# Add auto-backup at 00:00 Perm time (21:00 UTC)
-echo "0 21 * * * /bin/bash /home/$CURRENT_USER/scripts/auto-cleanup/backup.sh >/dev/null 2>&1" >> "$CRON_TEMP"
+# Add auto-backup at 03:00 daily
+echo "0 3 * * * /bin/bash /home/$CURRENT_USER/scripts/auto-cleanup/backup.sh >/dev/null 2>&1" >> "$CRON_TEMP"
 
 # Install cron jobs
 if crontab "$CRON_TEMP" 2>/dev/null; then
@@ -1091,24 +1279,70 @@ services:
     networks:
       - nginx-network
 
-  # 2. Custom Admin Panel
-  admin-panel:
-    build:
-      context: ./admin-panel
-      dockerfile: Dockerfile
-    container_name: admin-panel
+  # 2. Jellyfin
+  jellyfin:
+    image: jellyfin/jellyfin
+    container_name: jellyfin
     restart: unless-stopped
+    user: $PUID:$PGID
     ports:
-      - "5006:5006"
+      - "8096:8096"
     volumes:
-      - /home/$CURRENT_USER/data/users:/app/data/users
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/$CURRENT_USER/docker/jellyfin/config:/config
+      - /home/$CURRENT_USER/media/movies:/media/movies:ro
+      - /home/$CURRENT_USER/media/tv:/media/tv:ro
+      - /home/$CURRENT_USER/media/music:/media/music:ro
+      - /etc/localtime:/etc/localtime:ro
     environment:
-      - SECRET_KEY=$AUTH_SECRET
+      - JELLYFIN_API_KEY=$JELLYFIN_API_KEY
     networks:
       - nginx-network
 
-  # 3. qBittorrent
+  # 3. Nextcloud
+  nextcloud:
+    image: nextcloud:latest
+    container_name: nextcloud
+    restart: unless-stopped
+    ports:
+      - "8082:80"
+    environment:
+      - NEXTCLOUD_ADMIN_USER=admin
+      - NEXTCLOUD_ADMIN_PASSWORD=$ADMIN_PASS
+      - NEXTCLOUD_TRUSTED_DOMAINS=$DOMAIN.duckdns.org $SERVER_IP localhost 127.0.0.1
+    volumes:
+      - /home/$CURRENT_USER/nextcloud/data:/var/www/html/data
+      - /home/$CURRENT_USER/nextcloud/config:/var/www/html/config
+      - /home/$CURRENT_USER/nextcloud/apps:/var/www/html/custom_apps
+      - /home/$CURRENT_USER/nextcloud/themes:/var/www/html/themes
+    networks:
+      - nginx-network
+
+  # 4. Uptime Kuma
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: always
+    ports:
+      - "3001:3001"
+    volumes:
+      - /home/$CURRENT_USER/docker/uptime-kuma/data:/app/data
+    networks:
+      - nginx-network
+
+  # 5. Portainer
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: always
+    ports:
+      - "9001:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/$CURRENT_USER/docker/portainer/data:/data
+    networks:
+      - nginx-network
+
+  # 6. qBittorrent
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
@@ -1128,91 +1362,7 @@ services:
     networks:
       - nginx-network
 
-  # 4. Search Backend
-  search-backend:
-    build:
-      context: ./search-backend
-      dockerfile: Dockerfile
-    container_name: search-backend
-    restart: unless-stopped
-    environment:
-      - PUID=$PUID
-      - PGID=$PGID
-      - TZ=Europe/Moscow
-      - QB_HOST=qbittorrent
-      - QB_PORT=8080
-      - QB_USERNAME=$QB_USERNAME
-      - QB_PASSWORD=$QB_PASSWORD
-    volumes:
-      - /home/$CURRENT_USER/docker/search-backend/logs:/app/logs
-      - /home/$CURRENT_USER/docker/search-backend/data:/app/data
-    depends_on:
-      - qbittorrent
-    networks:
-      - nginx-network
-
-  # 5. Jellyfin
-  jellyfin:
-    image: jellyfin/jellyfin
-    container_name: jellyfin
-    restart: unless-stopped
-    user: $PUID:$PGID
-    ports:
-      - "8096:8096"
-    volumes:
-      - /home/$CURRENT_USER/docker/jellyfin/config:/config
-      - /home/$CURRENT_USER/media/movies:/media/movies:ro
-      - /home/$CURRENT_USER/media/tv:/media/tv:ro
-      - /home/$CURRENT_USER/media/music:/media/music:ro
-      - /etc/localtime:/etc/localtime:ro
-    networks:
-      - nginx-network
-
-  # 6. Nextcloud
-  nextcloud:
-    image: nextcloud:latest
-    container_name: nextcloud
-    restart: unless-stopped
-    ports:
-      - "8082:80"
-    environment:
-      - NEXTCLOUD_ADMIN_USER=admin
-      - NEXTCLOUD_ADMIN_PASSWORD=$ADMIN_PASS
-      - NEXTCLOUD_TRUSTED_DOMAINS=$DOMAIN.duckdns.org $SERVER_IP localhost 127.0.0.1
-    volumes:
-      - /home/$CURRENT_USER/nextcloud/data:/var/www/html/data
-      - /home/$CURRENT_USER/nextcloud/config:/var/www/html/config
-      - /home/$CURRENT_USER/nextcloud/apps:/var/www/html/custom_apps
-      - /home/$CURRENT_USER/nextcloud/themes:/var/www/html/themes
-    networks:
-      - nginx-network
-
-  # 7. Uptime Kuma
-  uptime-kuma:
-    image: louislam/uptime-kuma:1
-    container_name: uptime-kuma
-    restart: always
-    ports:
-      - "3001:3001"
-    volumes:
-      - /home/$CURRENT_USER/docker/uptime-kuma/data:/app/data
-    networks:
-      - nginx-network
-
-  # 8. Portainer
-  portainer:
-    image: portainer/portainer-ce:latest
-    container_name: portainer
-    restart: always
-    ports:
-      - "9001:9000"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /home/$CURRENT_USER/docker/portainer/data:/data
-    networks:
-      - nginx-network
-
-  # 9. Nginx Reverse Proxy
+  # 7. Nginx Reverse Proxy
   nginx:
     image: nginx:alpine
     container_name: nginx
@@ -1225,7 +1375,6 @@ services:
       - ./heimdall:/usr/share/nginx/html
     depends_on:
       - auth-system
-      - admin-panel
       - jellyfin
       - nextcloud
     networks:
@@ -1260,10 +1409,6 @@ http {
         server auth-system:5001;
     }
 
-    upstream admin_panel {
-        server admin-panel:5006;
-    }
-
     upstream jellyfin {
         server jellyfin:8096;
     }
@@ -1285,26 +1430,17 @@ http {
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        # Admin routes - require authentication
+        # Admin routes
         location /admin/ {
-            auth_request /auth-validate;
-            auth_request_set $user $upstream_http_x_user;
-            proxy_set_header X-User $user;
-            
-            proxy_pass http://admin_panel/;
+            proxy_pass http://auth_system;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
-            
-            # Admin specific headers
-            proxy_set_header X-Forwarded-Host $host;
-            proxy_set_header X-Forwarded-Server $host;
         }
 
         # User routes - Jellyfin and Nextcloud access
         location /user/jellyfin/ {
-            auth_request /auth-validate;
             proxy_pass http://jellyfin/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -1317,7 +1453,6 @@ http {
         }
 
         location /user/nextcloud/ {
-            auth_request /auth-validate;
             proxy_pass http://nextcloud/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -1327,16 +1462,6 @@ http {
             # Nextcloud specific headers
             proxy_set_header X-Forwarded-Host $host;
             proxy_set_header X-Forwarded-Server $host;
-        }
-
-        # Authentication validation endpoint
-        location = /auth-validate {
-            internal;
-            proxy_pass http://auth_system/api/user/profile;
-            proxy_pass_request_body off;
-            proxy_set_header Content-Length "";
-            proxy_set_header X-Original-URI $request_uri;
-            proxy_set_header X-Original-Method $request_method;
         }
 
         # Static files for main page
@@ -1396,13 +1521,6 @@ check_vpn_status() {
     else
         echo "❌ WireGuard: STOPPED"
     fi
-    
-    # Check Hiddify
-    if docker ps | grep -q hiddify; then
-        echo "✅ Hiddify: RUNNING"
-    else
-        echo "❌ Hiddify: NOT RUNNING"
-    fi
 }
 
 create_wireguard_client() {
@@ -1420,6 +1538,9 @@ create_wireguard_client() {
     # Get next available IP
     LAST_IP=$(sudo grep -o '10.0.0.[0-9]*' /etc/wireguard/wg0.conf | tail -1)
     NEXT_IP=$(echo $LAST_IP | awk -F. '{printf "10.0.0.%d", $4+1}')
+    if [ -z "$NEXT_IP" ]; then
+        NEXT_IP="10.0.0.2"
+    fi
     
     # Add client to server config
     sudo tee -a /etc/wireguard/wg0.conf > /dev/null << EOF
@@ -1598,164 +1719,7 @@ bcrypt==4.0.1
 PyJWT==2.8.0
 AUTH_REQUIREMENTS
 
-# Create admin panel Dockerfile
-cat > "/home/$CURRENT_USER/docker/admin-panel/Dockerfile" << 'ADMIN_DOCKERFILE'
-FROM python:3.9-slim
-
-RUN apt-get update && apt-get install -y \
-    gcc python3-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-RUN mkdir -p /app/data/users
-
-EXPOSE 5006
-
-CMD ["python", "app.py"]
-ADMIN_DOCKERFILE
-
-cat > "/home/$CURRENT_USER/docker/admin-panel/requirements.txt" << 'ADMIN_REQUIREMENTS'
-Flask==2.3.3
-psutil==5.9.5
-docker==6.1.3
-bcrypt==4.0.1
-ADMIN_REQUIREMENTS
-
-# Create search backend Dockerfile
-cat > "/home/$CURRENT_USER/docker/search-backend/Dockerfile" << 'SEARCH_DOCKERFILE'
-FROM python:3.9-slim
-
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y \
-    curl wget git jq \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-RUN mkdir -p /app/logs /app/data
-
-EXPOSE 5000
-
-CMD ["python", "app.py"]
-SEARCH_DOCKERFILE
-
-# Start all services
-log "🐳 Запуск всех Docker контейнеров..."
-cd "/home/$CURRENT_USER/docker"
-
-if sudo docker-compose up -d --build; then
-    log "✅ Все сервисы успешно запущены"
-    
-    # Wait for services to start
-    sleep 30
-    
-    # Check service status
-    log "📊 Статус сервисов:"
-    sudo docker-compose ps
-    
-    # Test critical services
-    log "🔍 Тестирование основных сервисов..."
-    
-    # Test authentication system
-    if curl -f -s http://localhost:5001/ >/dev/null; then
-        log "✅ Система аутентификации работает"
-    else
-        log "❌ Ошибка системы аутентификации"
-    fi
-    
-    # Test admin panel
-    if curl -f -s http://localhost:5006/ >/dev/null; then
-        log "✅ Admin Panel работает"
-    else
-        log "❌ Ошибка Admin Panel"
-    fi
-    
-else
-    log "❌ Ошибка запуска Docker контейнеров"
-    exit 1
-fi
-
-# Create management scripts
-log "🔧 Создание скриптов управления..."
-
-cat > "/home/$CURRENT_USER/scripts/server-manager.sh" << 'MANAGER_SCRIPT'
-#!/bin/bash
-
-source "/home/$(whoami)/.config/server_env"
-
-case "$1" in
-    "start")
-        cd "/home/$CURRENT_USER/docker" && docker-compose up -d
-        sudo systemctl start wg-quick@wg0 2>/dev/null || true
-        echo "✅ Все сервисы запущены"
-        ;;
-    "stop")
-        cd "/home/$CURRENT_USER/docker" && docker-compose down
-        sudo systemctl stop wg-quick@wg0 2>/dev/null || true
-        echo "✅ Все сервисы остановлены"
-        ;;
-    "restart")
-        cd "/home/$CURRENT_USER/docker" && docker-compose restart
-        sudo systemctl restart wg-quick@wg0 2>/dev/null || true
-        echo "✅ Все сервисы перезапущены"
-        ;;
-    "status")
-        echo "=== СТАТУС СИСТЕМЫ ==="
-        cd "/home/$CURRENT_USER/docker" && docker-compose ps
-        echo ""
-        echo "=== WIREGUARD STATUS ==="
-        sudo systemctl status wg-quick@wg0 --no-pager -l
-        ;;
-    "logs")
-        cd "/home/$CURRENT_USER/docker" && docker-compose logs -f
-        ;;
-    "vpn")
-        "/home/$CURRENT_USER/scripts/vpn-management/vpn-admin.sh" "$2"
-        ;;
-    "backup")
-        "/home/$CURRENT_USER/scripts/auto-cleanup/backup.sh"
-        ;;
-    "cleanup")
-        "/home/$CURRENT_USER/scripts/auto-cleanup/cleanup.sh"
-        ;;
-    "update")
-        cd "/home/$CURRENT_USER/docker" && docker-compose pull
-        cd "/home/$CURRENT_USER/docker" && docker-compose up -d --build
-        echo "✅ Система обновлена"
-        ;;
-    *)
-        echo "🔧 Home Server Management System"
-        echo "Usage: $0 {start|stop|restart|status|logs|vpn|backup|cleanup|update}"
-        echo ""
-        echo "Commands:"
-        echo "  start     - Запустить все сервисы"
-        echo "  stop      - Остановить все сервисы"
-        echo "  restart   - Перезапустить все сервисы"
-        echo "  status    - Показать статус системы"
-        echo "  logs      - Показать логи в реальном времени"
-        echo "  vpn       - Управление VPN (status|create-wg|list-clients|generate-qr|start-hiddify)"
-        echo "  backup    - Создать бэкап системы"
-        echo "  cleanup   - Запустить очистку системы"
-        echo "  update    - Обновить все сервисы"
-        ;;
-esac
-MANAGER_SCRIPT
-
-chmod +x "/home/$CURRENT_USER/scripts/server-manager.sh"
-
-# Create final dashboard
-log "🌐 Создание главной страницы..."
-
+# Create heimdall dashboard
 cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << 'DASHBOARD_HTML'
 <!DOCTYPE html>
 <html lang="ru">
@@ -1851,9 +1815,9 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << 'DASHBOARD_HTML'
             <p>Унифицированная система с единой авторизацией</p>
             
             <div class="system-info">
-                <p>🌐 Домен: <strong id="domainName">Загрузка...</strong></p>
+                <p>🌐 Домен: <strong id="domainName">$DOMAIN.duckdns.org</strong></p>
                 <p>🔧 Система: <strong>Docker + Nginx + Единая авторизация</strong></p>
-                <p>⏰ Время: <strong id="currentTime">Загрузка...</strong></p>
+                <p>⏰ Время: <strong id="currentTime">$(date)</strong></p>
             </div>
         </div>
 
@@ -1951,6 +1915,117 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << 'DASHBOARD_HTML'
 </html>
 DASHBOARD_HTML
 
+# Start all services
+log "🐳 Запуск всех Docker контейнеров..."
+cd "/home/$CURRENT_USER/docker"
+
+if sudo docker-compose up -d --build; then
+    log "✅ Все сервисы успешно запущены"
+    
+    # Wait for services to start
+    sleep 30
+    
+    # Check service status
+    log "📊 Статус сервисов:"
+    sudo docker-compose ps
+    
+    # Test critical services
+    log "🔍 Тестирование основных сервисов..."
+    
+    # Test authentication system
+    if curl -f -s http://localhost:5001/ >/dev/null; then
+        log "✅ Система аутентификации работает"
+    else
+        log "❌ Ошибка системы аутентификации"
+    fi
+    
+    # Test Jellyfin
+    if curl -f -s http://localhost:8096/ >/dev/null; then
+        log "✅ Jellyfin работает"
+    else
+        log "❌ Ошибка Jellyfin"
+    fi
+    
+    # Test Nextcloud
+    if curl -f -s http://localhost:8082/ >/dev/null; then
+        log "✅ Nextcloud работает"
+    else
+        log "❌ Ошибка Nextcloud"
+    fi
+    
+else
+    log "❌ Ошибка запуска Docker контейнеров"
+    exit 1
+fi
+
+# Create management scripts
+log "🔧 Создание скриптов управления..."
+
+cat > "/home/$CURRENT_USER/scripts/server-manager.sh" << 'MANAGER_SCRIPT'
+#!/bin/bash
+
+source "/home/$(whoami)/.config/server_env"
+
+case "$1" in
+    "start")
+        cd "/home/$CURRENT_USER/docker" && docker-compose up -d
+        sudo systemctl start wg-quick@wg0 2>/dev/null || true
+        echo "✅ Все сервисы запущены"
+        ;;
+    "stop")
+        cd "/home/$CURRENT_USER/docker" && docker-compose down
+        sudo systemctl stop wg-quick@wg0 2>/dev/null || true
+        echo "✅ Все сервисы остановлены"
+        ;;
+    "restart")
+        cd "/home/$CURRENT_USER/docker" && docker-compose restart
+        sudo systemctl restart wg-quick@wg0 2>/dev/null || true
+        echo "✅ Все сервисы перезапущены"
+        ;;
+    "status")
+        echo "=== СТАТУС СИСТЕМЫ ==="
+        cd "/home/$CURRENT_USER/docker" && docker-compose ps
+        echo ""
+        echo "=== WIREGUARD STATUS ==="
+        sudo systemctl status wg-quick@wg0 --no-pager -l
+        ;;
+    "logs")
+        cd "/home/$CURRENT_USER/docker" && docker-compose logs -f
+        ;;
+    "vpn")
+        "/home/$CURRENT_USER/scripts/vpn-management/vpn-admin.sh" "$2"
+        ;;
+    "backup")
+        "/home/$CURRENT_USER/scripts/auto-cleanup/backup.sh"
+        ;;
+    "cleanup")
+        "/home/$CURRENT_USER/scripts/auto-cleanup/cleanup.sh"
+        ;;
+    "update")
+        cd "/home/$CURRENT_USER/docker" && docker-compose pull
+        cd "/home/$CURRENT_USER/docker" && docker-compose up -d --build
+        echo "✅ Система обновлена"
+        ;;
+    *)
+        echo "🔧 Home Server Management System"
+        echo "Usage: $0 {start|stop|restart|status|logs|vpn|backup|cleanup|update}"
+        echo ""
+        echo "Commands:"
+        echo "  start     - Запустить все сервисы"
+        echo "  stop      - Остановить все сервисы"
+        echo "  restart   - Перезапустить все сервисы"
+        echo "  status    - Показать статус системы"
+        echo "  logs      - Показать логи в реальном времени"
+        echo "  vpn       - Управление VPN (status|create-wg|list-clients|generate-qr|start-hiddify)"
+        echo "  backup    - Создать бэкап системы"
+        echo "  cleanup   - Запустить очистку системы"
+        echo "  update    - Обновить все сервисы"
+        ;;
+esac
+MANAGER_SCRIPT
+
+chmod +x "/home/$CURRENT_USER/scripts/server-manager.sh"
+
 # Final system check
 log "🔍 Финальная проверка системы..."
 
@@ -1990,18 +2065,19 @@ fi
 
 echo ""
 echo "💾 АВТОМАТИЧЕСКИЕ ПРОЦЕССЫ:"
-echo "🧹 Очистка: Ежедневно в 00:00 (Пермское время)"
-echo "💾 Бэкапы: Ежедневно в 00:00 (Пермское время)"
+echo "🧹 Очистка: Ежедневно в 02:00"
+echo "💾 Бэкапы: Ежедневно в 03:00"
 echo "🌐 DuckDNS: Каждые 5 минут"
 
 echo ""
 echo "📊 КЛЮЧЕВЫЕ СЕРВИСЫ:"
 services=(
     "http://localhost:5001"
-    "http://localhost:5006" 
     "http://localhost:8096"
     "http://localhost:8082"
     "http://localhost:8080"
+    "http://localhost:3001"
+    "http://localhost:9001"
 )
 
 for service in "${services[@]}"; do
