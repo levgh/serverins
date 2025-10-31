@@ -1,4 +1,4 @@
-#!/bin/bash
+!/bin/bash
 # --- GLOBAL CONFIGURATION AND UTILITIES ---
 
 set -e
