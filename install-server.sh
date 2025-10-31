@@ -89,15 +89,10 @@ QB_CREDS
         chmod 600 "$creds_file"
         log "✅ Сгенерированы безопасные учетные данные qBittorrent"
     else
-        if command -v jq &> /dev/null; then
-            QB_USERNAME=$(jq -r '.username' "$creds_file")
-            QB_PASSWORD=$(jq -r '.password' "$creds_file") 
-            log "✅ Загружены существующие учетные данные qBittorrent"
-        else
-            log "❌ Ошибка: jq не найдена."
-            QB_USERNAME="qbittorrent_manual"
-            QB_PASSWORD="password_manual"
-        fi
+        # Временное решение пока jq не установлена
+        QB_USERNAME="qbittorrent_$(openssl rand -hex 4)"
+        QB_PASSWORD=$(openssl rand -hex 16)
+        log "⚠️  Временно сгенерированы новые учетные данные (jq не установлена)"
     fi
     
     export QB_USERNAME QB_PASSWORD
