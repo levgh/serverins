@@ -8,6 +8,10 @@ mkdir -p "/home/$CURRENT_USER/docker/admin-panel"
 mkdir -p "/home/$CURRENT_USER/docker/jellyfin"
 mkdir -p "/home/$CURRENT_USER/docker/nextcloud"
 mkdir -p "/home/$CURRENT_USER/docker/uptime-kuma"
+mkdir -p "/home/$CURRENT_USER/docker/qbittorrent"
+mkdir -p "/home/$CURRENT_USER/docker/search-backend"
+mkdir -p "/home/$CURRENT_USER/docker/media-manager"
+mkdir -p "/home/$CURRENT_USER/docker/auth-system"
 mkdir -p "/home/$CURRENT_USER/scripts"
 mkdir -p "/home/$CURRENT_USER/data/users"
 mkdir -p "/home/$CURRENT_USER/data/logs"
@@ -566,183 +570,341 @@ else
     sudo wg-quick up wg0 2>/dev/null || true
 fi
 
-# --- Authentication System Setup ---
-log "🔐 Настройка единой системы авторизации..."
+# --- COMPLETELY REWRITTEN AUTH SYSTEM ---
+log "🔐 Настройка новой системы авторизации..."
 
-mkdir -p "/home/$CURRENT_USER/auth-system"
+# Создаем структуру для auth-system
+mkdir -p "/home/$CURRENT_USER/docker/auth-system/app"
+mkdir -p "/home/$CURRENT_USER/docker/auth-system/app/templates"
+mkdir -p "/home/$CURRENT_USER/docker/auth-system/app/static"
+mkdir -p "/home/$CURRENT_USER/docker/auth-system/app/data"
 
-cat > "/home/$CURRENT_USER/auth-system/app.py" << 'AUTH_APP_EOF'
-from flask import Flask, request, jsonify, session, redirect, url_for, render_template
+# Создаем основное приложение
+cat > "/home/$CURRENT_USER/docker/auth-system/app/app.py" << 'AUTH_APP_EOF'
+from flask import Flask, request, jsonify, session, redirect, url_for, render_template, flash
 import json
 import os
 import bcrypt
 from datetime import datetime, timedelta
 import logging
 import jwt
+from functools import wraps
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('AUTH_SECRET', 'default-secret-key')
+app.secret_key = os.environ.get('AUTH_SECRET', 'fallback-secret-key-change-in-production')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
-logging.basicConfig(level=logging.INFO)
+# Конфигурация путей
+BASE_DIR = "/app/data"
+USERS_FILE = os.path.join(BASE_DIR, "users.json")
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
+AUDIT_LOG = os.path.join(LOGS_DIR, "audit.log")
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(os.path.join(LOGS_DIR, "app.log")),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
-USERS_FILE = '/app/data/users/users.json'
-AUDIT_LOG = '/app/data/logs/auth_audit.log'
+def init_directories():
+    """Инициализация необходимых директорий"""
+    os.makedirs(BASE_DIR, exist_ok=True)
+    os.makedirs(LOGS_DIR, exist_ok=True)
 
 def load_users():
+    """Загрузка пользователей из файла"""
     try:
-        with open(USERS_FILE, 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {"users": [], "sessions": {}, "login_attempts": {}}
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading users: {e}")
+    
+    # Возвращаем структуру по умолчанию
+    return {
+        "users": [],
+        "sessions": {},
+        "login_attempts": {},
+        "settings": {
+            "max_login_attempts": 5,
+            "session_timeout": 24
+        }
+    }
 
 def save_users(data):
-    os.makedirs(os.path.dirname(USERS_FILE), exist_ok=True)
-    with open(USERS_FILE, 'w') as f:
-        json.dump(data, f, indent=2)
-
-def log_audit(event_type, username, ip, details=""):
-    log_entry = {
-        "timestamp": datetime.now().isoformat(),
-        "event_type": event_type,
-        "username": username,
-        "ip": ip,
-        "details": details
-    }
-    
+    """Сохранение пользователей в файл"""
     try:
-        os.makedirs(os.path.dirname(AUDIT_LOG), exist_ok=True)
-        with open(AUDIT_LOG, 'a') as f:
-            f.write(json.dumps(log_entry) + '\n')
+        with open(USERS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        logger.error(f"Error saving users: {e}")
+        return False
+
+def log_audit(event_type, username, ip, details="", status="success"):
+    """Логирование событий аудита"""
+    try:
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "event_type": event_type,
+            "username": username,
+            "ip": ip,
+            "details": details,
+            "status": status
+        }
+        
+        with open(AUDIT_LOG, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
     except Exception as e:
         logger.error(f"Audit log error: {e}")
 
+def hash_password(password):
+    """Хеширование пароля"""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def verify_password(password, hashed):
+    """Проверка пароля"""
+    try:
+        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+    except Exception as e:
+        logger.error(f"Password verification error: {e}")
+        return False
+
 def authenticate_user(username, password, ip):
+    """Аутентификация пользователя"""
     users_data = load_users()
+    settings = users_data.get('settings', {})
+    max_attempts = settings.get('max_login_attempts', 5)
     
     login_attempts = users_data.get('login_attempts', {})
     user_attempts = login_attempts.get(ip, {}).get(username, 0)
     
-    if user_attempts >= 5:
-        log_audit("login_blocked", username, ip, "Too many failed attempts")
-        return None, "Too many failed attempts. Try again later."
+    # Проверка блокировки по IP
+    if user_attempts >= max_attempts:
+        log_audit("login_blocked", username, ip, f"Too many failed attempts: {user_attempts}", "blocked")
+        return None, f"Слишком много неудачных попыток. Попробуйте позже."
     
+    # Поиск пользователя
     for user in users_data.get('users', []):
         if user['username'] == username and user.get('is_active', True):
-            try:
-                if bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
-                    if ip in login_attempts and username in login_attempts[ip]:
-                        del login_attempts[ip][username]
+            if verify_password(password, user['password']):
+                # Сброс счетчика попыток
+                if ip in login_attempts and username in login_attempts[ip]:
+                    del login_attempts[ip][username]
                     save_users(users_data)
-                    
-                    log_audit("login_success", username, ip)
-                    return user, None
-            except Exception as e:
-                logger.error(f"Auth error for {username}: {e}")
+                
+                log_audit("login_success", username, ip, "User authenticated", "success")
+                return user, None
+            else:
+                break
     
+    # Увеличение счетчика неудачных попыток
     if ip not in login_attempts:
         login_attempts[ip] = {}
     login_attempts[ip][username] = user_attempts + 1
     users_data['login_attempts'] = login_attempts
     save_users(users_data)
     
-    log_audit("login_failed", username, ip, f"Attempt {user_attempts + 1}")
-    return None, "Invalid credentials"
+    log_audit("login_failed", username, ip, f"Failed attempt {user_attempts + 1}", "failed")
+    return None, "Неверное имя пользователя или пароль"
 
 def create_jwt_token(user):
+    """Создание JWT токена"""
     payload = {
+        'user_id': user['username'],
         'username': user['username'],
-        'prefix': user['prefix'],
-        'permissions': user['permissions'],
+        'role': user['role'],
+        'permissions': user.get('permissions', []),
         'exp': datetime.utcnow() + timedelta(hours=24)
     }
     return jwt.encode(payload, app.secret_key, algorithm='HS256')
 
 def verify_jwt_token(token):
+    """Проверка JWT токена"""
     try:
         payload = jwt.decode(token, app.secret_key, algorithms=['HS256'])
         return payload
     except jwt.ExpiredSignatureError:
+        log_audit("token_expired", "system", "unknown", "JWT token expired", "failed")
         return None
     except jwt.InvalidTokenError:
+        log_audit("token_invalid", "system", "unknown", "Invalid JWT token", "failed")
         return None
 
+def login_required(f):
+    """Декоратор для проверки аутентификации"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def role_required(role):
+    """Декоратор для проверки роли"""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if 'user' not in session:
+                return redirect(url_for('login'))
+            if session['user']['role'] != role:
+                flash('Недостаточно прав для доступа к этой странице', 'error')
+                return redirect(url_for('dashboard'))
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+# Инициализация приложения
+@app.before_first_request
+def initialize_app():
+    init_directories()
+    create_default_users()
+
+def create_default_users():
+    """Создание пользователей по умолчанию"""
+    users_data = load_users()
+    
+    if not users_data.get('users'):
+        default_users = [
+            {
+                "username": "admin",
+                "password": hash_password("admin123"),
+                "role": "admin",
+                "permissions": ["all"],
+                "email": "admin@localhost",
+                "is_active": True,
+                "created_at": datetime.now().isoformat()
+            },
+            {
+                "username": "user1",
+                "password": hash_password("user123"),
+                "role": "user",
+                "permissions": ["jellyfin", "nextcloud"],
+                "email": "user1@localhost",
+                "is_active": True,
+                "created_at": datetime.now().isoformat()
+            },
+            {
+                "username": "test",
+                "password": hash_password("test123"),
+                "role": "user",
+                "permissions": ["jellyfin", "nextcloud"],
+                "email": "test@localhost",
+                "is_active": True,
+                "created_at": datetime.now().isoformat()
+            }
+        ]
+        
+        users_data['users'] = default_users
+        if save_users(users_data):
+            logger.info("Default users created successfully")
+        else:
+            logger.error("Failed to create default users")
+
+# Маршруты приложения
 @app.route('/')
 def index():
-    return render_template('login.html')
+    if 'user' in session:
+        return redirect(url_for('dashboard'))
+    return redirect(url_for('login'))
 
-@app.route('/login', methods=['POST'])
+@app.route('/login', methods=['GET', 'POST'])
 def login():
-    username = request.form.get('username')
-    password = request.form.get('password')
-    ip = request.remote_addr
+    if 'user' in session:
+        return redirect(url_for('dashboard'))
     
-    user, error = authenticate_user(username, password, ip)
-    
-    if user:
-        session['user'] = user
-        session['jwt_token'] = create_jwt_token(user)
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        ip = request.remote_addr
         
-        if user['prefix'] == 'Administrator':
-            return redirect('/admin/dashboard')
+        user, error = authenticate_user(username, password, ip)
+        
+        if user:
+            session.permanent = True
+            session['user'] = {
+                'username': user['username'],
+                'role': user['role'],
+                'permissions': user.get('permissions', [])
+            }
+            session['jwt_token'] = create_jwt_token(user)
+            
+            log_audit("session_start", username, ip, "User session started", "success")
+            flash('Успешный вход в систему!', 'success')
+            return redirect(url_for('dashboard'))
         else:
-            return redirect('/user/dashboard')
-    else:
-        return render_template('login.html', error=error)
+            flash(error, 'error')
+    
+    return render_template('login.html')
 
 @app.route('/logout')
 def logout():
     username = session.get('user', {}).get('username', 'unknown')
     ip = request.remote_addr
     
-    log_audit("logout", username, ip)
+    log_audit("logout", username, ip, "User logged out", "success")
     
     session.clear()
-    return redirect('/')
+    flash('Вы вышли из системы', 'info')
+    return redirect(url_for('login'))
 
-@app.route('/admin/dashboard')
-def admin_dashboard():
-    if 'user' not in session or session['user']['prefix'] != 'Administrator':
-        return redirect('/')
-    return render_template('admin_dashboard.html', user=session['user'])
-
-@app.route('/user/dashboard')
-def user_dashboard():
-    if 'user' not in session:
-        return redirect('/')
-    return render_template('user_dashboard.html', user=session['user'])
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    user_role = session['user']['role']
+    
+    if user_role == 'admin':
+        return render_template('admin_dashboard.html', user=session['user'])
+    else:
+        return render_template('user_dashboard.html', user=session['user'])
 
 @app.route('/api/user/profile')
+@login_required
 def user_profile():
-    if 'user' not in session:
-        return jsonify({'error': 'Unauthorized'}), 401
-    
     return jsonify({
         'username': session['user']['username'],
-        'prefix': session['user']['prefix'],
+        'role': session['user']['role'],
         'permissions': session['user']['permissions']
     })
 
-@app.route('/auth-validate')
+@app.route('/auth/validate')
 def auth_validate():
     token = request.headers.get('X-Auth-Token')
     if not token:
-        return jsonify({'error': 'No token'}), 401
+        return jsonify({'error': 'No token provided'}), 401
     
     payload = verify_jwt_token(token)
     if not payload:
-        return jsonify({'error': 'Invalid token'}), 401
+        return jsonify({'error': 'Invalid or expired token'}), 401
     
     return jsonify(payload)
 
+@app.route('/admin/users')
+@role_required('admin')
+def admin_users():
+    users_data = load_users()
+    return jsonify(users_data.get('users', []))
+
+@app.errorhandler(404)
+def not_found(error):
+    return render_template('404.html'), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal server error: {error}")
+    return render_template('500.html'), 500
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=False)
+    app.run(host='0.0.0.0', port=5000, debug=False)
 AUTH_APP_EOF
 
-mkdir -p "/home/$CURRENT_USER/auth-system/templates"
-
-cat > "/home/$CURRENT_USER/auth-system/templates/login.html" << 'LOGIN_HTML_EOF'
+# Создаем шаблоны
+cat > "/home/$CURRENT_USER/docker/auth-system/app/templates/login.html" << 'LOGIN_HTML_EOF'
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -752,298 +914,236 @@ cat > "/home/$CURRENT_USER/auth-system/templates/login.html" << 'LOGIN_HTML_EOF'
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Arial', sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 20px;
         }
         .login-container {
-            background: white;
+            background: rgba(255, 255, 255, 0.95);
             padding: 40px;
-            border-radius: 15px;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
             width: 100%;
-            max-width: 400px;
+            max-width: 450px;
+            backdrop-filter: blur(10px);
         }
         .login-header {
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 40px;
         }
         .login-header h1 {
             color: #333;
             margin-bottom: 10px;
+            font-size: 2.2em;
+            font-weight: 300;
+        }
+        .login-header p {
+            color: #666;
+            font-size: 1.1em;
         }
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 25px;
         }
         .form-group label {
             display: block;
-            margin-bottom: 5px;
+            margin-bottom: 8px;
             color: #555;
-            font-weight: bold;
+            font-weight: 600;
+            font-size: 0.95em;
         }
         .form-group input {
             width: 100%;
-            padding: 12px 15px;
-            border: 2px solid #ddd;
-            border-radius: 8px;
+            padding: 15px 20px;
+            border: 2px solid #e1e5e9;
+            border-radius: 12px;
             font-size: 16px;
-            transition: border-color 0.3s;
+            transition: all 0.3s ease;
+            background: #f8f9fa;
         }
         .form-group input:focus {
             border-color: #667eea;
+            background: white;
             outline: none;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
         .login-btn {
             width: 100%;
-            padding: 12px;
+            padding: 15px;
             background: linear-gradient(135deg, #667eea, #764ba2);
             color: white;
             border: none;
-            border-radius: 8px;
+            border-radius: 12px;
             font-size: 16px;
+            font-weight: 600;
             cursor: pointer;
-            transition: transform 0.3s;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
         }
         .login-btn:hover {
             transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
         }
-        .error-message {
+        .login-btn:active {
+            transform: translateY(0);
+        }
+        .alert {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            text-align: center;
+            font-weight: 500;
+        }
+        .alert-error {
             background: #fee;
             color: #c33;
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            text-align: center;
             border: 1px solid #fcc;
         }
+        .alert-success {
+            background: #efe;
+            color: #363;
+            border: 1px solid #cfc;
+        }
+        .alert-info {
+            background: #eef;
+            color: #336;
+            border: 1px solid #ccf;
+        }
         .user-info {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+        }
+        .user-info h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+        .user-account {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid #e1e5e9;
+        }
+        .user-account:last-child {
+            border-bottom: none;
+        }
+        .account-role {
+            font-size: 0.8em;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-weight: 600;
+        }
+        .role-admin {
+            background: #667eea;
+            color: white;
+        }
+        .role-user {
+            background: #764ba2;
+            color: white;
+        }
+        .server-info {
             text-align: center;
             margin-top: 20px;
-            color: #666;
-            font-size: 14px;
+            color: #888;
+            font-size: 0.9em;
         }
     </style>
 </head>
 <body>
     <div class="login-container">
         <div class="login-header">
-            <h1>🔐 Домашний Сервер</h1>
+            <h1>🏠 Домашний Сервер</h1>
             <p>Единая система авторизации</p>
         </div>
         
-        {% if error %}
-        <div class="error-message">
-            {{ error }}
-        </div>
-        {% endif %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'error' if category == 'error' else 'info' if category == 'info' else 'success' }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
         
         <form method="POST" action="/login">
             <div class="form-group">
-                <label for="username">Имя пользователя:</label>
-                <input type="text" id="username" name="username" required>
+                <label for="username">👤 Имя пользователя:</label>
+                <input type="text" id="username" name="username" required autocomplete="username">
             </div>
             
             <div class="form-group">
-                <label for="password">Пароль:</label>
-                <input type="password" id="password" name="password" required>
+                <label for="password">🔒 Пароль:</label>
+                <input type="password" id="password" name="password" required autocomplete="current-password">
             </div>
             
-            <button type="submit" class="login-btn">Войти</button>
+            <button type="submit" class="login-btn">Войти в систему</button>
         </form>
         
         <div class="user-info">
-            <p><strong>Тестовые пользователи:</strong></p>
-            <p>👑 Администратор: admin / admin123</p>
-            <p>👥 Пользователь: user1 / user123</p>
-            <p>👥 Тестовый: test / test123</p>
+            <h3>📋 Тестовые учетные записи:</h3>
+            <div class="user-account">
+                <span>👑 Администратор</span>
+                <span>admin / admin123</span>
+                <span class="account-role role-admin">ADMIN</span>
+            </div>
+            <div class="user-account">
+                <span>👥 Пользователь</span>
+                <span>user1 / user123</span>
+                <span class="account-role role-user">USER</span>
+            </div>
+            <div class="user-account">
+                <span>🧪 Тестовый</span>
+                <span>test / test123</span>
+                <span class="account-role role-user">USER</span>
+            </div>
+        </div>
+        
+        <div class="server-info">
+            <p>🔧 Домашний сервер Lev | 🐳 Docker | 🔐 Flask Auth</p>
         </div>
     </div>
 </body>
 </html>
 LOGIN_HTML_EOF
 
-cat > "/home/$CURRENT_USER/auth-system/templates/admin_dashboard.html" << 'ADMIN_DASHBOARD_EOF'
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Административная панель</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Arial', sans-serif;
-            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
-            min-height: 100vh;
-            color: white;
-        }
-        .header {
-            background: rgba(255,255,255,0.1);
-            padding: 20px;
-            text-align: center;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .services-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-            margin-top: 30px;
-        }
-        .service-card {
-            background: linear-gradient(135deg, #00B4DB, #0083B0);
-            padding: 25px;
-            border-radius: 15px;
-            text-align: center;
-            cursor: pointer;
-            transition: transform 0.3s;
-            color: white;
-            text-decoration: none;
-            display: block;
-        }
-        .service-card:hover {
-            transform: translateY(-5px);
-        }
-        .logout-btn {
-            background: #ff4757;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            margin-top: 20px;
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>👑 Административная панель</h1>
-        <p>Добро пожаловать, {{ user.username }}!</p>
-    </div>
-    
-    <div class="container">
-        <div class="services-grid">
-            <a href="/user/jellyfin/" class="service-card">
-                <div class="service-icon">🎬</div>
-                <div class="service-name">Jellyfin</div>
-                <div class="service-description">Медиасервер</div>
-            </a>
-            
-            <a href="/user/nextcloud/" class="service-card">
-                <div class="service-icon">☁️</div>
-                <div class="service-name">Nextcloud</div>
-                <div class="service-description">Облачное хранилище</div>
-            </a>
-            
-            <a href="http://localhost:9001" target="_blank" class="service-card">
-                <div class="service-icon">🐳</div>
-                <div class="service-name">Portainer</div>
-                <div class="service-description">Управление Docker</div>
-            </a>
-            
-            <a href="http://localhost:3001" target="_blank" class="service-card">
-                <div class="service-icon">📊</div>
-                <div class="service-name">Uptime Kuma</div>
-                <div class="service-description">Мониторинг</div>
-            </a>
-        </div>
-        
-        <button class="logout-btn" onclick="location.href='/logout'">Выйти</button>
-    </div>
-</body>
-</html>
-ADMIN_DASHBOARD_EOF
+# Создаем Dockerfile для auth-system
+cat > "/home/$CURRENT_USER/docker/auth-system/Dockerfile" << 'AUTH_DOCKERFILE'
+FROM python:3.9-slim
 
-cat > "/home/$CURRENT_USER/auth-system/templates/user_dashboard.html" << 'USER_DASHBOARD_EOF'
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Пользовательская панель</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Arial', sans-serif;
-            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
-            min-height: 100vh;
-            color: white;
-        }
-        .header {
-            background: rgba(255,255,255,0.1);
-            padding: 20px;
-            text-align: center;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .services-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-            margin-top: 30px;
-        }
-        .service-card {
-            background: linear-gradient(135deg, #00B4DB, #0083B0);
-            padding: 25px;
-            border-radius: 15px;
-            text-align: center;
-            cursor: pointer;
-            transition: transform 0.3s;
-            color: white;
-            text-decoration: none;
-            display: block;
-        }
-        .service-card:hover {
-            transform: translateY(-5px);
-        }
-        .logout-btn {
-            background: #ff4757;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            margin-top: 20px;
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>👥 Пользовательская панель</h1>
-        <p>Добро пожаловать, {{ user.username }}!</p>
-    </div>
-    
-    <div class="container">
-        <div class="services-grid">
-            <a href="/user/jellyfin/" class="service-card">
-                <div class="service-icon">🎬</div>
-                <div class="service-name">Jellyfin</div>
-                <div class="service-description">Медиасервер</div>
-            </a>
-            
-            <a href="/user/nextcloud/" class="service-card">
-                <div class="service-icon">☁️</div>
-                <div class="service-name">Nextcloud</div>
-                <div class="service-description">Облачное хранилище</div>
-            </a>
-        </div>
-        
-        <button class="logout-btn" onclick="location.href='/logout'">Выйти</button>
-    </div>
-</body>
-</html>
-USER_DASHBOARD_EOF
+RUN apt-get update && apt-get install -y \
+    gcc \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /app
 
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app/ .
+
+RUN mkdir -p /app/data /app/data/logs /app/data/users
+
+EXPOSE 5000
+
+CMD ["python", "app.py"]
+AUTH_DOCKERFILE
+
+# Создаем requirements.txt
+cat > "/home/$CURRENT_USER/docker/auth-system/requirements.txt" << 'AUTH_REQUIREMENTS'
+Flask==2.3.3
+bcrypt==4.0.1
+PyJWT==2.8.0
+Werkzeug==2.3.7
+AUTH_REQUIREMENTS
 
 # --- Authentication Setup ---
 log "🔐 Настройка системы авторизации..."
@@ -1251,18 +1351,17 @@ version: '3.8'
 
 services:
   auth-system:
-    build:
-      context: ./auth-system
-      dockerfile: Dockerfile
+    build: ./auth-system
     container_name: auth-system
     restart: unless-stopped
     ports:
-      - "5001:5001"
+      - "5000:5000"
+    environment:
+      - AUTH_SECRET=${AUTH_SECRET}
     volumes:
+      - /home/$CURRENT_USER/docker/auth-system/app/data:/app/data
       - /home/$CURRENT_USER/data/users:/app/data/users
       - /home/$CURRENT_USER/data/logs:/app/data/logs
-    environment:
-      - AUTH_SECRET=$AUTH_SECRET
     networks:
       - nginx-network
 
@@ -1386,7 +1485,7 @@ http {
     error_log /var/log/nginx/error.log;
 
     upstream auth_system {
-        server auth-system:5001;
+        server auth-system:5000;
     }
 
     upstream jellyfin {
@@ -1653,33 +1752,6 @@ chmod +x "/home/$CURRENT_USER/scripts/vpn-management/vpn-admin.sh"
 # --- Final Setup and Start ---
 log "🚀 Финальная настройка и запуск системы..."
 
-cat > "/home/$CURRENT_USER/docker/auth-system/Dockerfile" << 'AUTH_DOCKERFILE'
-FROM python:3.9-slim
-
-RUN apt-get update && apt-get install -y \
-    gcc python3-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-RUN mkdir -p /app/data/users /app/data/logs
-
-EXPOSE 5001
-
-CMD ["python", "app.py"]
-AUTH_DOCKERFILE
-
-cat > "/home/$CURRENT_USER/docker/auth-system/requirements.txt" << 'AUTH_REQUIREMENTS'
-Flask==2.3.3
-bcrypt==4.0.1
-PyJWT==2.8.0
-AUTH_REQUIREMENTS
-
 cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << 'DASHBOARD_HTML'
 <!DOCTYPE html>
 <html lang="ru">
@@ -1887,7 +1959,7 @@ if sudo docker-compose up -d --build; then
     
     log "🔍 Тестирование основных сервисов..."
     
-    if curl -f -s http://localhost:5001/ >/dev/null; then
+    if curl -f -s http://localhost:5000/ >/dev/null; then
         log "✅ Система аутентификации работает"
     else
         log "❌ Ошибка системы аутентификации"
@@ -2022,7 +2094,7 @@ echo "🌐 DuckDNS: Каждые 5 минут"
 echo ""
 echo "📊 КЛЮЧЕВЫЕ СЕРВИСЫ:"
 services=(
-    "http://localhost:5001"
+    "http://localhost:5000"
     "http://localhost:8096"
     "http://localhost:8082"
     "http://localhost:8080"
