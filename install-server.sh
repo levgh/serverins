@@ -250,6 +250,50 @@ check_python_dependencies() {
 }
 
 
+check_ports() {
+    local ports=(80 8096 5000 8080 3001 51820 5001 9000 8081 5005 9001 5006 8082)
+    local conflict_found=0
+    
+    log "🔍 Проверка доступности портов..."
+    for port in "${ports[@]}"; do
+        if ss -lntu | grep -q ":${port}[[:space:]]"; then
+            log "⚠️  Порт $port уже занят, освобождаем..."
+            
+            # Останавливаем Docker контейнеры, использующие порт
+            local container_info=$(docker ps --format "table {{.Names}}\t{{.Ports}}" | grep ":${port}->" | awk '{print $1}')
+            if [ -n "$container_info" ]; then
+                log "🛑 Останавливаем контейнер: $container_info"
+                docker stop "$container_info" 2>/dev/null || true
+                docker rm "$container_info" 2>/dev/null || true
+            fi
+            
+            # Убиваем процессы на порту
+            sudo fuser -k "${port}/tcp" 2>/dev/null || true
+            sudo fuser -k "${port}/udp" 2>/dev/null || true
+            
+            # Проверяем еще раз
+            sleep 2
+            if ss -lntu | grep -q ":${port}[[:space:]]"; then
+                log "❌ Порт $port все еще занят после очистки"
+                conflict_found=1
+            else
+                log "✅ Порт $port успешно освобожден"
+            fi
+        else
+            log "✅ Порт $port свободен"
+        fi
+    done
+    
+    if [ $conflict_found -eq 1 ]; then
+        log "⚠️  Некоторые порты не удалось освободить автоматически"
+        return 1
+    fi
+    return 0
+}
+
+
+
+
 install_docker_compose() {
     if command -v docker-compose &> /dev/null; then
         log "✅ Docker Compose (v1) уже установлен"
