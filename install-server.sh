@@ -278,7 +278,7 @@ execute_command "sudo apt update" "Обновление списка пакет�
 execute_command "sudo apt upgrade -y" "Обновление системы"
 
 log "📦 Установка пакетов..."
-execute_command "sudo apt install -y curl wget git docker.io nginx mysql-server python3 python3-pip cron nano htop tree unzip net-tools wireguard resolvconf qrencode fail2ban software-properties-common apt-transport-https ca-certificates gnupg bc jq python3-bcrypt" "Установка основных пакетов"
+execute_command "sudo apt install -y curl wget git docker.io nginx mysql-server python3 python3-pip cron nano htop tree unzip net-tools wireguard resolvconf qrencode fail2ban software-properties-common apt-transport-https ca-certificates gnupg bc jq python3-bcrypt" "Установка основных пакетов"n3-bcrypt" "Установка основных пакетов"
 
 install_docker_compose
 
