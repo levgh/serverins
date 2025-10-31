@@ -249,24 +249,6 @@ check_python_dependencies() {
     done
 }
 
-check_ports() {
-    local ports=(80 8096 5000 8080 3001 51820 5001 9000 8081 5005 9001 5006 8082)
-    local conflict_found=0
-    
-    log "🔍 Проверка доступности портов..."
-    for port in "${ports[@]}"; do
-        if ss -lntu | grep -q ":${port}[[:space:]]"; then
-            log "❌ Порт $port уже занят: $(ss -lntu | grep ":${port}[[:space:]]")"
-            conflict_found=1
-        fi
-    done
-    
-    if [ $conflict_found -eq 1 ]; then
-        log "⚠️  Освободите занятые порты или измените конфигурацию"
-        return 1
-    fi
-    return 0
-}
 
 install_docker_compose() {
     if command -v docker-compose &> /dev/null; then
