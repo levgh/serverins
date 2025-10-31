@@ -2679,5 +2679,4 @@ echo "   sudo systemctl status wg-quick@wg0"
 echo "   tail -f /home/$CURRENT_USER/install.log"
 echo "   ./real-system-monitor.sh"
 echo "   ./real-server-manager.sh admin-stats"
-echo ""
-echo "=========================================="
+
