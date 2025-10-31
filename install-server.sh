@@ -1,6 +1,54 @@
 #!/bin/bash
 # --- GLOBAL CONFIGURATION AND UTILITIES ---
 
+# --- Folder Structure and Permissions ---
+log "📁 Создание структуры папок..."
+mkdir -p "/home/$CURRENT_USER/docker/heimdall"
+mkdir -p "/home/$CURRENT_USER/docker/admin-panel"
+mkdir -p "/home/$CURRENT_USER/docker/jellyfin"
+mkdir -p "/home/$CURRENT_USER/docker/nextcloud"
+mkdir -p "/home/$CURRENT_USER/docker/uptime-kuma"
+mkdir -p "/home/$CURRENT_USER/scripts"
+mkdir -p "/home/$CURRENT_USER/data/users"
+mkdir -p "/home/$CURRENT_USER/data/logs"
+mkdir -p "/home/$CURRENT_USER/data/backups"
+mkdir -p "/home/$CURRENT_USER/docker/qbittorrent"
+mkdir -p "/home/$CURRENT_USER/docker/search-backend"
+mkdir -p "/home/$CURRENT_USER/docker/media-manager"
+mkdir -p "/home/$CURRENT_USER/docker/auth-system"
+mkdir -p "/home/$CURRENT_USER/media/movies"
+mkdir -p "/home/$CURRENT_USER/media/tv"
+mkdir -p "/home/$CURRENT_USER/media/music"
+mkdir -p "/home/$CURRENT_USER/media/temp"
+mkdir -p "/home/$CURRENT_USER/media/backups"
+mkdir -p "/home/$CURRENT_USER/media/torrents"
+mkdir -p "/home/$CURRENT_USER/nextcloud/data"
+mkdir -p "/home/$CURRENT_USER/nextcloud/config"
+mkdir -p "/home/$CURRENT_USER/nextcloud/apps"
+mkdir -p "/home/$CURRENT_USER/nextcloud/themes"
+
+mkdir -p "/home/$CURRENT_USER/docker/jellyfin/config"
+mkdir -p "/home/$CURRENT_USER/docker/nextcloud/data"
+mkdir -p "/home/$CURRENT_USER/docker/uptime-kuma/data"
+mkdir -p "/home/$CURRENT_USER/docker/qbittorrent/config"
+mkdir -p "/home/$CURRENT_USER/docker/search-backend/data"
+mkdir -p "/home/$CURRENT_USER/docker/search-backend/logs"
+mkdir -p "/home/$CURRENT_USER/docker/media-manager/config"
+mkdir -p "/home/$CURRENT_USER/docker/media-manager/logs"
+mkdir -p "/home/$CURRENT_USER/docker/portainer/data"
+mkdir -p "/home/$CURRENT_USER/docker/admin-panel/data"
+mkdir -p "/home/$CURRENT_USER/docker/auth-system/data"
+
+sudo chown -R "$CURRENT_USER:$CURRENT_USER" "/home/$CURRENT_USER/docker"
+sudo chown -R "$CURRENT_USER:$CURRENT_USER" "/home/$CURRENT_USER/data"
+sudo chown -R "$CURRENT_USER:$CURRENT_USER" "/home/$CURRENT_USER/media"
+sudo chown -R "$CURRENT_USER:$CURRENT_USER" "/home/$CURRENT_USER/nextcloud"
+sudo chmod -R 755 "/home/$CURRENT_USER/docker"
+sudo chmod -R 755 "/home/$CURRENT_USER/data"
+sudo chmod -R 755 "/home/$CURRENT_USER/media"
+sudo chmod -R 755 "/home/$CURRENT_USER/nextcloud"
+
+
 set -e
 cleanup_temp() {
     rm -rf /tmp/install_*
@@ -969,52 +1017,7 @@ cat > "/home/$CURRENT_USER/auth-system/templates/user_dashboard.html" << 'USER_D
 </html>
 USER_DASHBOARD_EOF
 
-# --- Folder Structure and Permissions ---
-log "📁 Создание структуры папок..."
-mkdir -p "/home/$CURRENT_USER/docker/heimdall"
-mkdir -p "/home/$CURRENT_USER/docker/admin-panel"
-mkdir -p "/home/$CURRENT_USER/docker/jellyfin"
-mkdir -p "/home/$CURRENT_USER/docker/nextcloud"
-mkdir -p "/home/$CURRENT_USER/docker/uptime-kuma"
-mkdir -p "/home/$CURRENT_USER/scripts"
-mkdir -p "/home/$CURRENT_USER/data/users"
-mkdir -p "/home/$CURRENT_USER/data/logs"
-mkdir -p "/home/$CURRENT_USER/data/backups"
-mkdir -p "/home/$CURRENT_USER/docker/qbittorrent"
-mkdir -p "/home/$CURRENT_USER/docker/search-backend"
-mkdir -p "/home/$CURRENT_USER/docker/media-manager"
-mkdir -p "/home/$CURRENT_USER/docker/auth-system"
-mkdir -p "/home/$CURRENT_USER/media/movies"
-mkdir -p "/home/$CURRENT_USER/media/tv"
-mkdir -p "/home/$CURRENT_USER/media/music"
-mkdir -p "/home/$CURRENT_USER/media/temp"
-mkdir -p "/home/$CURRENT_USER/media/backups"
-mkdir -p "/home/$CURRENT_USER/media/torrents"
-mkdir -p "/home/$CURRENT_USER/nextcloud/data"
-mkdir -p "/home/$CURRENT_USER/nextcloud/config"
-mkdir -p "/home/$CURRENT_USER/nextcloud/apps"
-mkdir -p "/home/$CURRENT_USER/nextcloud/themes"
 
-mkdir -p "/home/$CURRENT_USER/docker/jellyfin/config"
-mkdir -p "/home/$CURRENT_USER/docker/nextcloud/data"
-mkdir -p "/home/$CURRENT_USER/docker/uptime-kuma/data"
-mkdir -p "/home/$CURRENT_USER/docker/qbittorrent/config"
-mkdir -p "/home/$CURRENT_USER/docker/search-backend/data"
-mkdir -p "/home/$CURRENT_USER/docker/search-backend/logs"
-mkdir -p "/home/$CURRENT_USER/docker/media-manager/config"
-mkdir -p "/home/$CURRENT_USER/docker/media-manager/logs"
-mkdir -p "/home/$CURRENT_USER/docker/portainer/data"
-mkdir -p "/home/$CURRENT_USER/docker/admin-panel/data"
-mkdir -p "/home/$CURRENT_USER/docker/auth-system/data"
-
-sudo chown -R "$CURRENT_USER:$CURRENT_USER" "/home/$CURRENT_USER/docker"
-sudo chown -R "$CURRENT_USER:$CURRENT_USER" "/home/$CURRENT_USER/data"
-sudo chown -R "$CURRENT_USER:$CURRENT_USER" "/home/$CURRENT_USER/media"
-sudo chown -R "$CURRENT_USER:$CURRENT_USER" "/home/$CURRENT_USER/nextcloud"
-sudo chmod -R 755 "/home/$CURRENT_USER/docker"
-sudo chmod -R 755 "/home/$CURRENT_USER/data"
-sudo chmod -R 755 "/home/$CURRENT_USER/media"
-sudo chmod -R 755 "/home/$CURRENT_USER/nextcloud"
 
 # --- Authentication Setup ---
 log "🔐 Настройка системы авторизации..."
