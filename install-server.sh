@@ -1,4 +1,4 @@
-!/bin/bash
+#!/bin/bash
 # --- GLOBAL CONFIGURATION AND UTILITIES ---
 
 set -e
@@ -145,7 +145,6 @@ echo "=========================================="
 
 get_interface() {
     local interface
-    # Простой способ определения интерфейса
     interface=$(ip route | awk '/default/ {print $5}' | head -1)
     
     if [ -z "$interface" ]; then
@@ -165,7 +164,6 @@ check_disk_space() {
     
     available_kb=$(df -k / | awk 'NR==2 {print $4}')
     
-    # Простая проверка без bc
     available_gb=$((available_kb / 1024 / 1024))
     
     if [ "$available_gb" -lt "$required_gb" ]; then
@@ -221,6 +219,7 @@ check_ports() {
     fi
     return 0
 }
+
 install_docker_compose() {
     if command -v docker-compose &> /dev/null; then
         log "✅ Docker Compose (v1) уже установлен"
@@ -342,9 +341,6 @@ fi
 # --- VPN System Setup ---
 log "🔒 Настройка VPN системы..."
 
-# WireGuard Setup
-log "🔒 Настройка VPN WireGuard..."
-
 if ! sudo modprobe wireguard 2>/dev/null; then
     log "⚠️  WireGuard не поддерживается ядром, устанавливаем wireguard-dkms..."
     execute_command "sudo apt install -y wireguard-dkms" "Установка WireGuard DKMS"
@@ -431,9 +427,6 @@ else
     log "⚠️ qrencode не установлен, QR код не сгенерирован"
 fi
 
-# Hiddify Setup
-log "🌐 Настройка Hiddify VPN..."
-
 mkdir -p "/home/$CURRENT_USER/vpn/hiddify"
 
 cat > "/home/$CURRENT_USER/vpn/hiddify/hiddify-setup.sh" << 'HIDDIFY_EOF'
@@ -444,18 +437,15 @@ log() {
     echo "[Hiddify] $(date '+%H:%M:%S') $1" | tee -a "$HOME/install.log"
 }
 
-# Install Hiddify
 log "📦 Установка Hiddify..."
 curl -O https://raw.githubusercontent.com/hiddify/hiddify-config/main/install.sh
 chmod +x install.sh
 
-# Run installation with auto-confirm
 echo "y" | sudo ./install.sh
 
 if [ $? -eq 0 ]; then
     log "✅ Hiddify успешно установлен"
     
-    # Generate Hiddify client config
     cat > "/home/$CURRENT_USER/vpn/hiddify-client.json" << CONFIG_EOF
 {
     "server": "$DOMAIN.duckdns.org",
@@ -479,7 +469,7 @@ chmod +x "/home/$CURRENT_USER/vpn/hiddify/hiddify-setup.sh"
 if command -v ufw >/dev/null 2>&1; then
     log "🔥 Настройка firewall..."
     sudo ufw allow $VPN_PORT/udp
-    sudo ufw allow 443/tcp  # Hiddify port
+    sudo ufw allow 443/tcp
     sudo ufw allow ssh
     sudo ufw allow 80/tcp
     sudo ufw allow 8080/tcp
@@ -557,7 +547,6 @@ def log_audit(event_type, username, ip, details=""):
 def authenticate_user(username, password, ip):
     users_data = load_users()
     
-    # Check login attempts
     login_attempts = users_data.get('login_attempts', {})
     user_attempts = login_attempts.get(ip, {}).get(username, 0)
     
@@ -569,7 +558,6 @@ def authenticate_user(username, password, ip):
         if user['username'] == username and user.get('is_active', True):
             try:
                 if bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
-                    # Reset login attempts
                     if ip in login_attempts and username in login_attempts[ip]:
                         del login_attempts[ip][username]
                     save_users(users_data)
@@ -579,7 +567,6 @@ def authenticate_user(username, password, ip):
             except Exception as e:
                 logger.error(f"Auth error for {username}: {e}")
     
-    # Increment failed attempts
     if ip not in login_attempts:
         login_attempts[ip] = {}
     login_attempts[ip][username] = user_attempts + 1
@@ -623,7 +610,6 @@ def login():
         session['user'] = user
         session['jwt_token'] = create_jwt_token(user)
         
-        # Redirect based on user prefix
         if user['prefix'] == 'Administrator':
             return redirect('/admin/dashboard')
         else:
@@ -1092,7 +1078,6 @@ log "🧹 Настройка системы автоматической очи�
 
 mkdir -p "/home/$CURRENT_USER/scripts/auto-cleanup"
 
-# Auto Cleanup Script
 cat > "/home/$CURRENT_USER/scripts/auto-cleanup/cleanup.sh" << 'CLEANUP_EOF'
 #!/bin/bash
 source "$HOME/.config/server_env"
@@ -1103,39 +1088,31 @@ log() {
 
 log "🧹 Запуск автоматической очистки..."
 
-# Clean temporary files
 clean_temp_files() {
     log "📁 Очистка временных файлов..."
     
-    # Clean Docker logs and temp files
     sudo find /var/lib/docker/containers/ -name "*.log" -type f -mtime +7 -delete 2>/dev/null || true
     
-    # Clean system temp files
     sudo find /tmp -type f -atime +7 -delete 2>/dev/null || true
     sudo find /var/tmp -type f -atime +7 -delete 2>/dev/null || true
     
-    # Clean application temp files
     find "/home/$CURRENT_USER/media/temp" -type f -mtime +3 -delete 2>/dev/null || true
     find "/home/$CURRENT_USER/docker" -name "*.tmp" -type f -mtime +3 -delete 2>/dev/null || true
     
-    # Clean old logs
     find "/home/$CURRENT_USER/data/logs" -name "*.log" -type f -mtime +30 -delete 2>/dev/null || true
 }
 
-# Clean empty directories
 clean_empty_dirs() {
     log "📂 Очистка пустых директорий..."
     find "/home/$CURRENT_USER/media" -type d -empty -mtime +30 -delete 2>/dev/null || true
     find "/home/$CURRENT_USER/data" -type d -empty -mtime +30 -delete 2>/dev/null || true
 }
 
-# Clean old backups
 clean_old_backups() {
     log "🗑️ Очистка старых бэкапов..."
     find "/home/$CURRENT_USER/data/backups" -name "server_backup_*" -type d -mtime +30 -exec rm -rf {} \; 2>/dev/null || true
 }
 
-# Main cleanup execution
 clean_temp_files
 clean_empty_dirs
 clean_old_backups
@@ -1143,7 +1120,6 @@ clean_old_backups
 log "✅ Автоматическая очистка завершена"
 CLEANUP_EOF
 
-# Backup Script
 cat > "/home/$CURRENT_USER/scripts/auto-cleanup/backup.sh" << 'BACKUP_EOF'
 #!/bin/bash
 source "$HOME/.config/server_env"
@@ -1163,32 +1139,26 @@ create_backup() {
     
     log "📦 Создание бэкапа конфигураций..."
     
-    # Backup Docker configurations
     tar -czf "$BACKUP_DIR/$BACKUP_NAME/docker_configs.tar.gz" \
         "/home/$CURRENT_USER/docker" \
         "/home/$CURRENT_USER/.config" 2>/dev/null || true
     
-    # Backup user data and authentication
     tar -czf "$BACKUP_DIR/$BACKUP_NAME/user_data.tar.gz" \
         "/home/$CURRENT_USER/data/users" \
         "/home/$CURRENT_USER/auth-system" 2>/dev/null || true
     
-    # Backup important service data
     tar -czf "$BACKUP_DIR/$BACKUP_NAME/service_data.tar.gz" \
         "/home/$CURRENT_USER/nextcloud/config" \
         "/home/$CURRENT_USER/docker/jellyfin/config" \
         "/home/$CURRENT_USER/docker/qbittorrent/config" 2>/dev/null || true
     
-    # Backup VPN configurations
     tar -czf "$BACKUP_DIR/$BACKUP_NAME/vpn_configs.tar.gz" \
         "/home/$CURRENT_USER/vpn" \
         "/etc/wireguard" 2>/dev/null || true
     
-    # Backup scripts
     tar -czf "$BACKUP_DIR/$BACKUP_NAME/scripts.tar.gz" \
         "/home/$CURRENT_USER/scripts" 2>/dev/null || true
     
-    # Create backup manifest
     cat > "$BACKUP_DIR/$BACKUP_NAME/backup_manifest.json" << MANIFEST_EOF
 {
     "backup_name": "$BACKUP_NAME",
@@ -1212,7 +1182,6 @@ clean_old_backups() {
     find "$BACKUP_DIR" -name "server_backup_*" -type d -mtime +30 -exec rm -rf {} \; 2>/dev/null || true
 }
 
-# Execute backup
 create_backup
 clean_old_backups
 
@@ -1222,21 +1191,16 @@ BACKUP_EOF
 chmod +x "/home/$CURRENT_USER/scripts/auto-cleanup/cleanup.sh"
 chmod +x "/home/$CURRENT_USER/scripts/auto-cleanup/backup.sh"
 
-# Setup cron jobs for auto-cleanup and backups
 log "⏰ Настройка cron jobs для автоматической очистки и бэкапов..."
 
 CRON_TEMP=$(mktemp)
 
-# Add existing DuckDNS cron
 echo "*/5 * * * * /bin/bash /home/$CURRENT_USER/scripts/duckdns-update.sh >/dev/null 2>&1" > "$CRON_TEMP"
 
-# Add auto-cleanup at 02:00 daily
 echo "0 2 * * * /bin/bash /home/$CURRENT_USER/scripts/auto-cleanup/cleanup.sh >/dev/null 2>&1" >> "$CRON_TEMP"
 
-# Add auto-backup at 03:00 daily
 echo "0 3 * * * /bin/bash /home/$CURRENT_USER/scripts/auto-cleanup/backup.sh >/dev/null 2>&1" >> "$CRON_TEMP"
 
-# Install cron jobs
 if crontab "$CRON_TEMP" 2>/dev/null; then
     log "✅ Cron jobs успешно установлены"
 else
@@ -1257,7 +1221,6 @@ cat > "/home/$CURRENT_USER/docker/docker-compose.yml" << DOCKER_COMPOSE_EOF
 version: '3.8'
 
 services:
-  # 1. Authentication System
   auth-system:
     build:
       context: ./auth-system
@@ -1274,7 +1237,6 @@ services:
     networks:
       - nginx-network
 
-  # 2. Jellyfin
   jellyfin:
     image: jellyfin/jellyfin
     container_name: jellyfin
@@ -1293,7 +1255,6 @@ services:
     networks:
       - nginx-network
 
-  # 3. Nextcloud
   nextcloud:
     image: nextcloud:latest
     container_name: nextcloud
@@ -1312,7 +1273,6 @@ services:
     networks:
       - nginx-network
 
-  # 4. Uptime Kuma
   uptime-kuma:
     image: louislam/uptime-kuma:1
     container_name: uptime-kuma
@@ -1324,7 +1284,6 @@ services:
     networks:
       - nginx-network
 
-  # 5. Portainer
   portainer:
     image: portainer/portainer-ce:latest
     container_name: portainer
@@ -1337,7 +1296,6 @@ services:
     networks:
       - nginx-network
 
-  # 6. qBittorrent
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
@@ -1357,7 +1315,6 @@ services:
     networks:
       - nginx-network
 
-  # 7. Nginx Reverse Proxy
   nginx:
     image: nginx:alpine
     container_name: nginx
@@ -1399,7 +1356,6 @@ http {
     access_log /var/log/nginx/access.log;
     error_log /var/log/nginx/error.log;
 
-    # Upstream services
     upstream auth_system {
         server auth-system:5001;
     }
@@ -1416,7 +1372,6 @@ http {
         listen 80;
         server_name _;
         
-        # Main page - authentication gateway
         location / {
             proxy_pass http://auth_system;
             proxy_set_header Host $host;
@@ -1425,7 +1380,6 @@ http {
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        # Admin routes
         location /admin/ {
             proxy_pass http://auth_system;
             proxy_set_header Host $host;
@@ -1434,7 +1388,6 @@ http {
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        # User routes - Jellyfin and Nextcloud access
         location /user/jellyfin/ {
             proxy_pass http://jellyfin/;
             proxy_set_header Host $host;
@@ -1442,7 +1395,6 @@ http {
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
             
-            # Jellyfin specific
             proxy_set_header X-Forwarded-Host $host;
             proxy_set_header X-Forwarded-Server $host;
         }
@@ -1454,19 +1406,16 @@ http {
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
             
-            # Nextcloud specific headers
             proxy_set_header X-Forwarded-Host $host;
             proxy_set_header X-Forwarded-Server $host;
         }
 
-        # Static files for main page
         location /static/ {
             root /usr/share/nginx/html;
             expires 1y;
             add_header Cache-Control "public, immutable";
         }
 
-        # Health checks
         location /health {
             access_log off;
             return 200 "healthy\n";
@@ -1509,7 +1458,6 @@ show_usage() {
 check_vpn_status() {
     log "🔍 Проверка статуса VPN сервисов..."
     
-    # Check WireGuard
     if systemctl is-active --quiet wg-quick@wg0; then
         echo "✅ WireGuard: RUNNING"
         sudo wg show
@@ -1526,18 +1474,15 @@ create_wireguard_client() {
     
     log "🔑 Создание нового WireGuard клиента: $CLIENT_NAME"
     
-    # Generate client keys
     CLIENT_PRIVATE_KEY=$(wg genkey)
     CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
     
-    # Get next available IP
     LAST_IP=$(sudo grep -o '10.0.0.[0-9]*' /etc/wireguard/wg0.conf | tail -1)
     NEXT_IP=$(echo $LAST_IP | awk -F. '{printf "10.0.0.%d", $4+1}')
     if [ -z "$NEXT_IP" ]; then
         NEXT_IP="10.0.0.2"
     fi
     
-    # Add client to server config
     sudo tee -a /etc/wireguard/wg0.conf > /dev/null << EOF
 
 [Peer]
@@ -1545,7 +1490,6 @@ PublicKey = $CLIENT_PUBLIC_KEY
 AllowedIPs = $NEXT_IP/32
 EOF
 
-    # Create client config
     CLIENT_CONFIG="$VPN_DIR/${CLIENT_NAME}.conf"
     tee "$CLIENT_CONFIG" > /dev/null << EOF
 [Interface]
@@ -1559,12 +1503,10 @@ Endpoint = $DOMAIN.duckdns.org:$VPN_PORT
 AllowedIPs = 0.0.0.0/0
 EOF
 
-    # Reload WireGuard configuration
     sudo wg syncconf wg0 <(sudo wg-quick strip wg0)
     
     log "✅ Клиент $CLIENT_NAME создан. Конфиг: $CLIENT_CONFIG"
     
-    # Generate QR code
     generate_qr_code "$CLIENT_NAME"
 }
 
@@ -1601,7 +1543,6 @@ generate_qr_code() {
         qrencode -t png -o "$QR_FILE" < "$CONFIG_FILE"
         log "✅ QR код создан: $QR_FILE"
         
-        # Display QR in terminal if possible
         qrencode -t ansiutf8 < "$CONFIG_FILE"
     else
         log "⚠️ qrencode не установлен. Установите: sudo apt install qrencode"
@@ -1615,17 +1556,14 @@ install_hiddify() {
     mkdir -p "$HIDDIFY_DIR"
     cd "$HIDDIFY_DIR"
     
-    # Download and install Hiddify
     curl -O https://raw.githubusercontent.com/hiddify/hiddify-config/main/install.sh
     chmod +x install.sh
     
-    # Run installation with auto-confirm
     echo "y" | sudo ./install.sh
     
     if [ $? -eq 0 ]; then
         log "✅ Hiddify успешно установлен"
         
-        # Generate client configuration
         generate_hiddify_config
     else
         log "❌ Ошибка установки Hiddify"
@@ -1686,7 +1624,6 @@ chmod +x "/home/$CURRENT_USER/scripts/vpn-management/vpn-admin.sh"
 # --- Final Setup and Start ---
 log "🚀 Финальная настройка и запуск системы..."
 
-# Create authentication system Dockerfile
 cat > "/home/$CURRENT_USER/docker/auth-system/Dockerfile" << 'AUTH_DOCKERFILE'
 FROM python:3.9-slim
 
@@ -1714,7 +1651,6 @@ bcrypt==4.0.1
 PyJWT==2.8.0
 AUTH_REQUIREMENTS
 
-# Create heimdall dashboard
 cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << 'DASHBOARD_HTML'
 <!DOCTYPE html>
 <html lang="ru">
@@ -1897,7 +1833,6 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << 'DASHBOARD_HTML'
                   '💡 Используйте скрипты управления для настройки VPN!');
         }
         
-        // Update info every minute
         setInterval(updateSystemInfo, 60000);
         updateSystemInfo();
         
@@ -1910,38 +1845,31 @@ cat > "/home/$CURRENT_USER/docker/heimdall/index.html" << 'DASHBOARD_HTML'
 </html>
 DASHBOARD_HTML
 
-# Start all services
 log "🐳 Запуск всех Docker контейнеров..."
 cd "/home/$CURRENT_USER/docker"
 
 if sudo docker-compose up -d --build; then
     log "✅ Все сервисы успешно запущены"
     
-    # Wait for services to start
     sleep 30
     
-    # Check service status
     log "📊 Статус сервисов:"
     sudo docker-compose ps
     
-    # Test critical services
     log "🔍 Тестирование основных сервисов..."
     
-    # Test authentication system
     if curl -f -s http://localhost:5001/ >/dev/null; then
         log "✅ Система аутентификации работает"
     else
         log "❌ Ошибка системы аутентификации"
     fi
     
-    # Test Jellyfin
     if curl -f -s http://localhost:8096/ >/dev/null; then
         log "✅ Jellyfin работает"
     else
         log "❌ Ошибка Jellyfin"
     fi
     
-    # Test Nextcloud
     if curl -f -s http://localhost:8082/ >/dev/null; then
         log "✅ Nextcloud работает"
     else
@@ -1953,7 +1881,6 @@ else
     exit 1
 fi
 
-# Create management scripts
 log "🔧 Создание скриптов управления..."
 
 cat > "/home/$CURRENT_USER/scripts/server-manager.sh" << 'MANAGER_SCRIPT'
@@ -2021,7 +1948,6 @@ MANAGER_SCRIPT
 
 chmod +x "/home/$CURRENT_USER/scripts/server-manager.sh"
 
-# Final system check
 log "🔍 Финальная проверка системы..."
 
 cat > "/home/$CURRENT_USER/scripts/system-check.sh" << 'SYSTEM_CHECK_EOF'
@@ -2093,7 +2019,6 @@ SYSTEM_CHECK_EOF
 
 chmod +x "/home/$CURRENT_USER/scripts/system-check.sh"
 
-# Run final system check
 "/home/$CURRENT_USER/scripts/system-check.sh"
 
 echo ""
