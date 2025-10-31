@@ -213,8 +213,8 @@ check_ports() {
     
     log "🔍 Проверка доступности портов..."
     for port in "${ports[@]}"; do
-        if ss -lntu | grep -q ":$port[[:space:]]"; then
-            log "❌ Порт $port уже занят: $(ss -lntu | grep ":$port[[:space:]]")"
+        if ss -lntu | grep -q ":${port}[[:space:]]"; then
+            log "❌ Порт $port уже занят: $(ss -lntu | grep ":${port}[[:space:]]")"
             conflict_found=1
         fi
     done
@@ -225,7 +225,6 @@ check_ports() {
     fi
     return 0
 }
-
 install_docker_compose() {
     if command -v docker-compose &> /dev/null; then
         log "✅ Docker Compose (v1) уже установлен"
