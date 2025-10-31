@@ -1,7 +1,7 @@
 #!/bin/bash
 # --- GLOBAL CONFIGURATION AND UTILITIES ---
 
-set -eEuo pipefail
+set -e
 trap 'rollback' ERR
 trap 'cleanup' EXIT
 
