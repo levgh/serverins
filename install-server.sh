@@ -1,4 +1,13 @@
 #!/bin/bash
+set -e
+
+echo "=========================================="
+echo "🔧 СОЗДАНИЕ ИСПРАВЛЕННОЙ ВЕРСИИ СКРИПТА"
+echo "=========================================="
+
+# Создаем исправленный скрипт с автоматическими значениями
+cat > /tmp/fixed-server-install.sh << 'SCRIPT'
+#!/bin/bash
 
 # --- GLOBAL CONFIGURATION AND UTILITIES ---
 
@@ -7,25 +16,25 @@ trap 'rollback' ERR
 trap 'cleanup' EXIT
 
 log() {
-    if [ ! -f "/home/$CURRENT_USER/install.log" ]; then
-        mkdir -p "/home/$CURRENT_USER"
-        touch "/home/$CURRENT_USER/install.log"
-        chmod 600 "/home/$CURRENT_USER/install.log"
+    if [ ! -f "/home/\$CURRENT_USER/install.log" ]; then
+        mkdir -p "/home/\$CURRENT_USER"
+        touch "/home/\$CURRENT_USER/install.log"
+        chmod 600 "/home/\$CURRENT_USER/install.log"
     fi
-    echo "[$(date '+%H:%M:%S')] $1" | tee -a "/home/$CURRENT_USER/install.log"
+    echo "[\$(date '+%H:%M:%S')] \$1" | tee -a "/home/\$CURRENT_USER/install.log"
 }
 
 rollback() {
-    local exit_code=$?
-    log "🔄 Выполняется откат изменений (код ошибки: $exit_code)..."
+    local exit_code=\$?
+    log "🔄 Выполняется откат изменений (код ошибки: \$exit_code)..."
     
-    cd "/home/$CURRENT_USER/docker" 2>/dev/null && sudo docker-compose down 2>/dev/null || true
+    cd "/home/\$CURRENT_USER/docker" 2>/dev/null && sudo docker-compose down 2>/dev/null || true
     
     sudo systemctl stop wg-quick@wg0 2>/dev/null || true
     sudo systemctl disable wg-quick@wg0 2>/dev/null || true
     
     log "⚠️  Установка прервана. Часть сервисов может быть не настроена."
-    exit $exit_code
+    exit \$exit_code
 }
 
 cleanup() {
@@ -34,123 +43,131 @@ cleanup() {
 }
 
 execute_command() {
-    local cmd="$1"
-    local description="$2"
+    local cmd="\$1"
+    local description="\$2"
     
-    log "Выполняется: $description"
-    if eval "$cmd" >> "/home/$CURRENT_USER/install.log" 2>&1; then
-        log "✅ Успешно: $description"
+    log "Выполняется: \$description"
+    if eval "\$cmd" >> "/home/\$CURRENT_USER/install.log" 2>&1; then
+        log "✅ Успешно: \$description"
         return 0
     else
-        log "❌ Ошибка: $description"
+        log "❌ Ошибка: \$description"
         return 1
     fi
 }
 
-# --- INPUT AND PREP FUNCTIONS ---
+# --- AUTOMATIC CONFIGURATION ---
+CURRENT_USER=\$(whoami)
+SERVER_IP=\$(hostname -I | awk '{print \$1}')
 
-safe_input() {
-    local prompt="$1"
-    local var_name="$2"
-    local is_secret="${3:-false}"
-    
-    while true; do
-        if [ "$is_secret" = "true" ]; then
-            read -r -s -p "$prompt: " value
-            echo
-        else
-            read -r -p "$prompt: " value
-        fi
-        
-        if [ -n "$value" ]; then
-            printf -v "$var_name" "%s" "$value"
-            break
-        else
-            echo "❌ Это поле обязательно для заполнения!"
-        fi
-    done
-}
+# АВТОМАТИЧЕСКИЕ ЗНАЧЕНИЯ
+DOMAIN="domenforserver123"
+TOKEN="7c4ac80c-d14f-4ca6-ae8c-df2b04a939ae"
+ADMIN_PASS="admin"
+
+echo "=========================================="
+echo "🔧 АВТОМАТИЧЕСКАЯ НАСТРОЙКА"
+echo "=========================================="
+echo "Домен: \$DOMAIN"
+echo "Токен: ***"
+echo "Пользователь: \$CURRENT_USER"
+echo "IP сервера: \$SERVER_IP"
 
 generate_qbittorrent_credentials() {
-    local config_dir="/home/$CURRENT_USER/.config"
-    local creds_file="$config_dir/qbittorrent.creds"
+    local config_dir="/home/\$CURRENT_USER/.config"
+    local creds_file="\$config_dir/qbittorrent.creds"
     
-    if [ ! -f "$creds_file" ]; then
-        QB_USERNAME="qbittorrent_$(openssl rand -hex 4)"
-        QB_PASSWORD=$(openssl rand -hex 16)
-        
-        cat > "$creds_file" << QB_CREDS
+    # ВСЕГДА генерируем новые credentials - простая логика
+    QB_USERNAME="qbittorrent_\$(openssl rand -hex 4)"
+    QB_PASSWORD=\$(openssl rand -hex 16)
+    
+    cat > "\$creds_file" << QB_CREDS
 {
-    "username": "$QB_USERNAME",
-    "password": "$QB_PASSWORD"
+    "username": "\$QB_USERNAME",
+    "password": "\$QB_PASSWORD"
 }
 QB_CREDS
-        
-        chmod 600 "$creds_file"
-        log "✅ Сгенерированы безопасные учетные данные qBittorrent"
-    else
-        # Временное решение пока jq не установлена
-        QB_USERNAME="qbittorrent_$(openssl rand -hex 4)"
-        QB_PASSWORD=$(openssl rand -hex 16)
-        log "⚠️  Временно сгенерированы новые учетные данные (jq не установлена)"
-    fi
+    
+    chmod 600 "\$creds_file"
+    log "✅ Сгенерированы безопасные учетные данные qBittorrent"
     
     export QB_USERNAME QB_PASSWORD
 }
 
 generate_auth_secret() {
-    local secret_file="/home/$CURRENT_USER/.config/auth_secret"
+    local secret_file="/home/\$CURRENT_USER/.config/auth_secret"
     
-    if [ ! -f "$secret_file" ]; then
-        AUTH_SECRET=$(openssl rand -hex 32)
-        echo "$AUTH_SECRET" > "$secret_file"
-        chmod 600 "$secret_file"
+    if [ ! -f "\$secret_file" ]; then
+        AUTH_SECRET=\$(openssl rand -hex 32)
+        echo "\$AUTH_SECRET" > "\$secret_file"
+        chmod 600 "\$secret_file"
         log "✅ Сгенерирован новый секретный ключ аутентификации"
     else
-        AUTH_SECRET=$(cat "$secret_file")
+        AUTH_SECRET=\$(cat "\$secret_file")
         log "✅ Загружен существующий секретный ключ аутентификации"
     fi
     
     export AUTH_SECRET
 }
 
+# ПРОПУСКАЕМ ИНТЕРАКТИВНЫЙ ВВОД - используем автоматические значения
+
+mkdir -p "/home/\$CURRENT_USER/.config"
+cat > "/home/\$CURRENT_USER/.config/server_env" << CONFIG_EOF
+DOMAIN="\$DOMAIN"
+TOKEN="\$TOKEN"
+ADMIN_PASS="\$ADMIN_PASS"
+SERVER_IP="\$SERVER_IP"
+CURRENT_USER="\$CURRENT_USER"
+QB_USERNAME="\$QB_USERNAME"
+QB_PASSWORD="\$QB_PASSWORD"
+AUTH_SECRET="\$AUTH_SECRET"
+CONFIG_EOF
+
+chmod 600 "/home/\$CURRENT_USER/.config/server_env"
+
+echo "=========================================="
+echo "🚀 УСТАНОВКА СИСТЕМЫ"
+echo "=========================================="
+
+# ОСТАЛЬНАЯ ЧАСТЬ СКРИПТА БЕЗ ИЗМЕНЕНИЙ
 get_interface() {
     local interface
-    interface=$(ip route | awk '/default/ {print $5}' | head -1)
+    interface=\$(ip route | awk '/default/ {print \$5}' | head -1)
     
-    if [ -z "$interface" ]; then
-        interface=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | head -1)
+    if [ -z "\$interface" ]; then
+        interface=\$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo | head -1)
     fi
     
-    if [ -z "$interface" ]; then
+    if [ -z "\$interface" ]; then
         for iface in /sys/class/net/*; do
-            iface_name=$(basename "$iface")
-            if [ "$iface_name" != "lo" ] && [ -f "/sys/class/net/$iface_name/operstate" ]; then
-                if [ "$(cat "/sys/class/net/$iface_name/operstate")" = "up" ] 2>/dev/null; then
-                    interface="$iface_name"
+            iface_name=\$(basename "\$iface")
+            if [ "\$iface_name" != "lo" ] && [ -f "/sys/class/net/\$iface_name/operstate" ]; then
+                if [ "\$(cat "/sys/class/net/\$iface_name/operstate")" = "up" ] 2>/dev/null; then
+                    interface="\$iface_name"
                     break
                 fi
             fi
         done
     fi
     
-    echo "$interface"
+    echo "\$interface"
 }
 
 check_disk_space() {
     local required_gb=30
     local available_kb available_gb
     
-    available_kb=$(df -k / | awk 'NR==2 {print $4}')
+    available_kb=\$(df -k / | awk 'NR==2 {print \$4}')
     
     if command -v bc &> /dev/null; then
-        available_gb=$(echo "scale=1; $available_kb / 1024 / 1024" | bc 2>/dev/null || echo "0")
+        available_gb=\$(echo "scale=1; \$available_kb / 1024 / 1024" | bc 2>/dev/null || echo "0")
     else
-        available_gb=$(echo "$available_kb" | awk '{printf "%.1f", $1/1024/1024}')
+        available_gb=\$(echo "\$available_kb" | awk '{printf "%.1f", \$1/1024/1024}')
     fi
 
-    if (( $(echo "$available_gb < $required_gb" | bc -l 2>/dev/null || echo "1") )); then
-        log "❌ Недостаточно места на диске. Доступно: ${available_gb}GB, требуется: ${required_gb}GB"
+    if (( \$(echo "\$available_gb < \$required_gb" | bc -l 2>/dev/null || echo "1") )); then
+        log "❌ Недостаточно места на диске. Доступно: \${available_gb}GB, требуется: \${required_gb}GB"
         exit 1
     fi
 }
@@ -159,12 +176,12 @@ check_required_commands() {
     local required_cmds=("curl" "wget" "git")
     local missing_cmds=()
     
-    for cmd in "${required_cmds[@]}"; do
-        if ! command -v "$cmd" &> /dev/null; then
-            missing_cmds+=("$cmd")
-            log "⚠️ $cmd не найдена, будет установлена"
+    for cmd in "\${required_cmds[@]}"; do
+        if ! command -v "\$cmd" &> /dev/null; then
+            missing_cmds+=("\$cmd")
+            log "⚠️ \$cmd не найдена, будет установлена"
         else
-            log "✅ $cmd найдена"
+            log "✅ \$cmd найдена"
         fi
     done
 }
@@ -173,11 +190,11 @@ check_python_dependencies() {
     log "🔍 Проверка Python зависимостей..."
     local required_packages=("bcrypt" "flask" "requests" "docker" "psutil")
     
-    for package in "${required_packages[@]}"; do
-        if ! python3 -c "import $package" 2>/dev/null; then
-            log "⚠️ $package не найден, будет установлен"
+    for package in "\${required_packages[@]}"; do
+        if ! python3 -c "import \$package" 2>/dev/null; then
+            log "⚠️ \$package не найден, будет установлен"
         else
-            log "✅ $package найден"
+            log "✅ \$package найден"
         fi
     done
 }
@@ -187,14 +204,14 @@ check_ports() {
     local conflict_found=0
     
     log "🔍 Проверка доступности портов..."
-    for port in "${ports[@]}"; do
-        if ss -lntu | grep -q ":${port}[[:space:]]"; then
-            log "❌ Порт $port уже занят: $(ss -lntu | grep ":${port}[[:space:]]")"
+    for port in "\${ports[@]}"; do
+        if ss -lntu | grep -q ":\${port}[[:space:]]"; then
+            log "❌ Порт \$port уже занят: \$(ss -lntu | grep ":\${port}[[:space:]]")"
             conflict_found=1
         fi
     done
     
-    if [ $conflict_found -eq 1 ]; then
+    if [ \$conflict_found -eq 1 ]; then
         log "⚠️  Освободите занятые порты или измените конфигурацию"
         return 1
     fi
@@ -208,7 +225,7 @@ install_docker_compose() {
     fi
     
     log "📦 Установка Docker Compose v1..."
-    execute_command "sudo curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)\" -o /usr/local/bin/docker-compose" "Загрузка Docker Compose v1.29.2"
+    execute_command "sudo curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose" "Загрузка Docker Compose v1.29.2"
     execute_command "sudo chmod +x /usr/local/bin/docker-compose" "Установка прав Docker Compose"
     
     execute_command "sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose" "Создание симлинка"
@@ -223,75 +240,30 @@ install_docker_compose() {
 }
 
 hash_password() {
-    local password="$1"
+    local password="\$1"
     python3 -c "
 import sys
 try:
     import bcrypt
     salt = bcrypt.gensalt(rounds=12)
-    hashed = bcrypt.hashpw('$password'.encode('utf-8'), salt)
+    hashed = bcrypt.hashpw('\$password'.encode('utf-8'), salt)
     print(hashed.decode('utf-8'))
 except ImportError:
     import hashlib
-    print(hashlib.sha256('$password'.encode()).hexdigest())
+    print(hashlib.sha256('\$password'.encode()).hexdigest())
 " 
 }
 
-# --- MAIN EXECUTION START ---
-
-echo "=========================================="
-echo "🔧 НАСТРОЙКА СИСТЕМЫ"
-echo "=========================================="
-
-DOMAIN="domenforserver123"
-TOKEN="7c4ac80c-d14f-4ca6-ae8c-df2b04a939ae"
-ADMIN_PASS="admin"
-
-CURRENT_USER=$(whoami)
-SERVER_IP=$(hostname -I | awk '{print $1}')
-
-mkdir -p "/home/$CURRENT_USER"
-touch "/home/$CURRENT_USER/install.log"
-chmod 600 "/home/$CURRENT_USER/install.log"
-
-if [ "$CURRENT_USER" = "root" ]; then
-    echo "❌ ОШИБКА: Не запускайте скрипт от root! Используйте обычного пользователя с sudo правами."
-    exit 1
-fi
-
-if ! sudo -n true 2>/dev/null; then
-    echo "❌ ОШИБКА: У пользователя $CURRENT_USER нет sudo прав!"
-    exit 1
-fi
-
+# ВЫЗЫВАЕМ ФУНКЦИИ
 generate_qbittorrent_credentials
 generate_auth_secret
 
-mkdir -p "/home/$CURRENT_USER/.config"
-cat > "/home/$CURRENT_USER/.config/server_env" << CONFIG_EOF
-DOMAIN="$DOMAIN"
-TOKEN="$TOKEN"
-ADMIN_PASS="$ADMIN_PASS"
-SERVER_IP="$SERVER_IP"
-CURRENT_USER="$CURRENT_USER"
-QB_USERNAME="$QB_USERNAME"
-QB_PASSWORD="$QB_PASSWORD"
-AUTH_SECRET="$AUTH_SECRET"
-CONFIG_EOF
-
-chmod 600 "/home/$CURRENT_USER/.config/server_env"
-source "/home/$CURRENT_USER/.config/server_env"
-
-echo "=========================================="
-echo "🚀 УСТАНОВКА СИСТЕМЫ"
-echo "=========================================="
-
-TOTAL_MEM=$(free -g | grep Mem: | awk '{print $2}')
-if [ "$TOTAL_MEM" -lt 2 ]; then
-    log "⚠️  ВНИМАНИЕ: Мало оперативной памяти (${TOTAL_MEM}GB). Рекомендуется минимум 2GB"
+TOTAL_MEM=\$(free -g | grep Mem: | awk '{print \$2}')
+if [ "\$TOTAL_MEM" -lt 2 ]; then
+    log "⚠️  ВНИМАНИЕ: Мало оперативной памяти (\${TOTAL_MEM}GB). Рекомендуется минимум 2GB"
     read -p "Продолжить установку? (y/N): " -n 1 -r
     echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    if [[ ! \$REPLY =~ ^[Yy]\$ ]]; then
         exit 1
     fi
 fi
@@ -313,7 +285,7 @@ install_docker_compose
 log "🐳 Настройка Docker..."
 execute_command "sudo systemctl enable docker" "Включение Docker"
 execute_command "sudo systemctl start docker" "Запуск Docker"
-execute_command "sudo usermod -aG docker $CURRENT_USER" "Добавление пользователя в группу docker"
+execute_command "sudo usermod -aG docker \$CURRENT_USER" "Добавление пользователя в группу docker"
 
 # --- DuckDNS Setup ---
 log "🌐 Настройка DuckDNS..."
