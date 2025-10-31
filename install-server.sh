@@ -248,9 +248,9 @@ echo "=========================================="
 echo "🔧 НАСТРОЙКА СИСТЕМЫ"
 echo "=========================================="
 
-safe_input "Введите домен DuckDNS (без .duckdns.org)" DOMAIN
-safe_input "Введите токен DuckDNS" TOKEN "true"
-safe_input "Введите пароль администратора" ADMIN_PASS "true"
+DOMAIN="domenforserver123"
+TOKEN="7c4ac80c-d14f-4ca6-ae8c-df2b04a939ae"
+ADMIN_PASS="admin"
 
 CURRENT_USER=$(whoami)
 SERVER_IP=$(hostname -I | awk '{print $1}')
