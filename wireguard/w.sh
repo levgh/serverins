@@ -1,34 +1,116 @@
-# 1. Остановить WireGuard
-sudo systemctl stop wg-quick@wg0
-sudo systemctl disable wg-quick@wg0
+# Создаем w.sh скрипт для настройки WireGuard
+cat > ~/w.sh << 'W_EOF'
+#!/bin/bash
+# WireGuard Auto-Setup Script
+# GitHub: https://github.com/levgh/serverins/tree/main/wireguard
 
-# 2. Удалить старый конфиг
-sudo rm -f /etc/wireguard/wg0.conf
-sudo rm -f /etc/wireguard/client*.key
+set -e
 
-# 3. Создать новый конфиг WireGuard с правильными настройками
-sudo tee /etc/wireguard/wg0.conf > /dev/null << 'WG_EOF'
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+log() {
+    echo -e "${GREEN}[$(date '+%H:%M:%S')]${NC} $1"
+}
+
+warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+    error "Please run as root or with sudo"
+    exit 1
+fi
+
+# Configuration
+WG_PORT=51820
+WG_NETWORK="10.8.0.0/24"
+WG_CONFIG="/etc/wireguard/wg0.conf"
+CLIENTS_DIR="$HOME/wireguard-clients"
+SCRIPTS_DIR="$HOME/scripts/wireguard"
+
+install_wireguard() {
+    log "Installing WireGuard..."
+    apt update
+    apt install -y wireguard resolvconf qrencode
+    
+    # Enable kernel module
+    modprobe wireguard
+    
+    log "WireGuard installed successfully"
+}
+
+configure_server() {
+    log "Configuring WireGuard server..."
+    
+    # Generate server keys
+    SERVER_PRIVATE_KEY=$(wg genkey)
+    SERVER_PUBLIC_KEY=$(echo $SERVER_PRIVATE_KEY | wg pubkey)
+    
+    # Create server config
+    cat > $WG_CONFIG << SERVER_EOF
 [Interface]
-PrivateKey = $(wg genkey)
+PrivateKey = $SERVER_PRIVATE_KEY
 Address = 10.8.0.1/24
-ListenPort = 51820
+ListenPort = $WG_PORT
 SaveConfig = true
 
-# Включить форвардинг и NAT
+# Enable forwarding and NAT
 PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
 
-# DNS для обхода блокировок
+# DNS for bypassing restrictions
 PostUp = sysctl -w net.ipv4.ip_forward=1
 PostUp = echo "nameserver 8.8.8.8" > /etc/resolv.conf; echo "nameserver 1.1.1.1" >> /etc/resolv.conf
-WG_EOF
+SERVER_EOF
 
-# 4. Включить IP forwarding на постоянной основе
-echo 'net.ipv4.ip_forward=1' | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
+    # Enable IP forwarding permanently
+    echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
+    sysctl -p
+    
+    log "WireGuard server configured"
+}
 
-# 5. Обновить скрипт создания клиентов
-cat > ~/scripts/wireguard/create_client.sh << 'WG_CLIENT_EOF'
+setup_firewall() {
+    log "Configuring firewall..."
+    
+    # Install UFW if not present
+    if ! command -v ufw &> /dev/null; then
+        apt install -y ufw
+    fi
+    
+    ufw allow $WG_PORT/udp comment 'WireGuard VPN'
+    ufw allow ssh comment 'SSH Access'
+    
+    # Enable UFW if not enabled
+    if ! ufw status | grep -q "Status: active"; then
+        echo "y" | ufw enable
+    fi
+    
+    log "Firewall configured"
+}
+
+create_management_scripts() {
+    log "Creating management scripts..."
+    
+    mkdir -p $SCRIPTS_DIR
+    mkdir -p $CLIENTS_DIR
+    
+    # Create client management script
+    cat > $SCRIPTS_DIR/create_client.sh << 'CLIENT_EOF'
 #!/bin/bash
 
 CLIENT_NAME=$1
@@ -38,12 +120,12 @@ if [ -z "$CLIENT_NAME" ]; then
     exit 1
 fi
 
-# Генерация ключей
+# Generate keys
 CLIENT_PRIVATE_KEY=$(wg genkey)
 CLIENT_PUBLIC_KEY=$(echo $CLIENT_PRIVATE_KEY | wg pubkey)
 
-# Определяем следующий IP
-LAST_IP=$(sudo grep -o '10.8.0.[0-9]*' /etc/wireguard/wg0.conf | tail -1)
+# Find next available IP
+LAST_IP=$(grep -o '10.8.0.[0-9]*' /etc/wireguard/wg0.conf | tail -1)
 if [ -z "$LAST_IP" ]; then
     CLIENT_IP="10.8.0.2"
 else
@@ -51,8 +133,8 @@ else
     CLIENT_IP="10.8.0.$((IP_NUM + 1))"
 fi
 
-# Добавить клиента в конфиг сервера
-sudo tee -a /etc/wireguard/wg0.conf > /dev/null << EOF
+# Add client to server config
+cat >> /etc/wireguard/wg0.conf << EOF
 
 # Client: $CLIENT_NAME
 [Peer]
@@ -60,14 +142,12 @@ PublicKey = $CLIENT_PUBLIC_KEY
 AllowedIPs = $CLIENT_IP/32
 EOF
 
-# Получить данные сервера
-SERVER_PUBLIC_KEY=$(sudo grep 'PrivateKey' /etc/wireguard/wg0.conf | head -1 | awk '{print $3}' | wg pubkey)
+# Get server data
+SERVER_PUBLIC_KEY=$(grep 'PrivateKey' /etc/wireguard/wg0.conf | head -1 | awk '{print $3}' | wg pubkey)
 SERVER_IP=$(curl -s http://checkip.amazonaws.com || hostname -I | awk '{print $1}')
 
-# Создать конфиг клиента
-mkdir -p ~/wireguard-clients
-
-cat > ~/wireguard-clients/${CLIENT_NAME}.conf << CLIENT_EOF
+# Create client config
+cat > $HOME/wireguard-clients/${CLIENT_NAME}.conf << CLIENT_CONFIG
 [Interface]
 PrivateKey = $CLIENT_PRIVATE_KEY
 Address = $CLIENT_IP/24
@@ -75,187 +155,132 @@ DNS = 8.8.8.8, 1.1.1.1
 
 [Peer]
 PublicKey = $SERVER_PUBLIC_KEY
-Endpoint = $SERVER_IP:51820
+Endpoint = $SERVER_IP:$WG_PORT
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25
+CLIENT_CONFIG
+
+# Reload WireGuard
+systemctl restart wg-quick@wg0
+
+echo "✅ Client $CLIENT_NAME created!"
+echo "📁 Config: $HOME/wireguard-clients/${CLIENT_NAME}.conf"
+echo "🌐 IP: $CLIENT_IP"
 CLIENT_EOF
 
-# Перезагрузить WireGuard
-sudo systemctl restart wg-quick@wg0
+    # Create QR code script
+    cat > $SCRIPTS_DIR/generate_qr.sh << 'QR_EOF'
+#!/bin/bash
 
-echo "✅ Клиент $CLIENT_NAME создан!"
-echo "📁 Конфиг: ~/wireguard-clients/${CLIENT_NAME}.conf"
-echo "🌐 IP: $CLIENT_IP"
-echo "🔑 Публичный ключ: $CLIENT_PUBLIC_KEY"
-WG_CLIENT_EOF
+CLIENT_NAME=$1
+CONFIG_FILE="$HOME/wireguard-clients/${CLIENT_NAME}.conf"
 
-chmod +x ~/scripts/wireguard/create_client.sh
+if [ -z "$CLIENT_NAME" ] || [ ! -f "$CONFIG_FILE" ]; then
+    echo "Usage: $0 <client_name>"
+    echo "Available clients:"
+    ls $HOME/wireguard-clients/*.conf 2>/dev/null | xargs -n 1 basename | sed 's/.conf//' || echo "No clients found"
+    exit 1
+fi
 
-# 6. Запустить WireGuard
-sudo systemctl enable wg-quick@wg0
-sudo systemctl start wg-quick@wg0
+if command -v qrencode >/dev/null 2>&1; then
+    qrencode -t ansiutf8 < "$CONFIG_FILE"
+    qrencode -t png -o "$HOME/wireguard-clients/${CLIENT_NAME}_qr.png" < "$CONFIG_FILE"
+    echo "✅ QR code saved: $HOME/wireguard-clients/${CLIENT_NAME}_qr.png"
+else
+    echo "⚠️ Install qrencode: sudo apt install qrencode"
+    echo "📋 Config: $CONFIG_FILE"
+fi
+QR_EOF
 
-# 7. Открыть порт в firewall
-sudo ufw allow 51820/udp comment 'WireGuard VPN'
+    chmod +x $SCRIPTS_DIR/create_client.sh
+    chmod +x $SCRIPTS_DIR/generate_qr.sh
+    
+    log "Management scripts created"
+}
 
-# 8. Создать тестового клиента
-~/scripts/wireguard/create_client.sh "test-client"
+start_service() {
+    log "Starting WireGuard service..."
+    
+    systemctl enable wg-quick@wg0
+    systemctl start wg-quick@wg0
+    
+    # Wait for service to start
+    sleep 3
+    
+    if systemctl is-active --quiet wg-quick@wg0; then
+        log "WireGuard service started successfully"
+    else
+        error "Failed to start WireGuard service"
+        exit 1
+    fi
+}
 
-# 9. Проверить статус
-echo "=== Статус WireGuard ==="
-sudo wg show
+create_test_client() {
+    log "Creating test client..."
+    $SCRIPTS_DIR/create_client.sh "test-client"
+}
 
-echo "=== Проверка подключения ==="
-sudo netstat -tlnp | grep 51820
+show_status() {
+    log "=== WireGuard Status ==="
+    wg show
+    
+    echo ""
+    log "=== System Information ==="
+    echo "🔧 Port: $WG_PORT/udp"
+    echo "🌐 Network: $WG_NETWORK"
+    echo "📁 Clients directory: $CLIENTS_DIR"
+    echo "🔧 Scripts directory: $SCRIPTS_DIR"
+    
+    echo ""
+    log "=== Usage Examples ==="
+    echo "Create client: $SCRIPTS_DIR/create_client.sh <name>"
+    echo "Generate QR: $SCRIPTS_DIR/generate_qr.sh <name>"
+    echo "Show status: wg show"
+    echo "Restart: systemctl restart wg-quick@wg0"
+}
 
-echo "=== Созданные клиенты ==="
-ls ~/wireguard-clients/
+main() {
+    log "Starting WireGuard Auto-Setup..."
+    
+    install_wireguard
+    configure_server
+    setup_firewall
+    create_management_scripts
+    start_service
+    create_test_client
+    show_status
+    
+    log "🎉 WireGuard setup completed successfully!"
+    log "📖 Full documentation: https://github.com/levgh/serverins/tree/main/wireguard"
+}
 
-# 10. Обновить app.py для работы с новым WireGuard
-cat > auth-system/app/app.py << 'APP_EOF'
-from flask import Flask, request, jsonify, session, redirect, url_for, render_template, flash
-import json
-import os
-import bcrypt
-from datetime import datetime, timedelta
-import logging
-from functools import wraps
-import subprocess
-import qrcode
-from io import BytesIO
-import base64
+# Run main function
+main
+W_EOF
 
-app = Flask(__name__)
-app.secret_key = os.environ.get('AUTH_SECRET', 'super-secret-key-2024-change-in-production')
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
+# Делаем скрипт исполняемым
+chmod +x ~/w.sh
 
-BASE_DIR = "/app/data"
-USERS_FILE = os.path.join(BASE_DIR, "users.json")
+# Создаем README для GitHub
+cat > ~/README_wireguard.md << 'README_EOF'
+# WireGuard Auto-Setup Script
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+Automated WireGuard VPN server setup with client management.
 
-def init_directories():
-    os.makedirs(BASE_DIR, exist_ok=True)
+## Features
 
-def hash_password(password):
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+- ✅ Automatic WireGuard installation
+- ✅ Server configuration with NAT
+- ✅ Firewall setup (UFW)
+- ✅ Client management scripts
+- ✅ QR code generation
+- ✅ DNS for bypassing restrictions
+- ✅ Full internet access for clients
 
-def verify_password(password, hashed):
-    try:
-        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
-    except:
-        return False
+## Quick Start
 
-def create_default_users():
-    users_data = {"users": []}
-    if not os.path.exists(USERS_FILE):
-        users_data['users'] = [
-            {
-                "username": "admin",
-                "password": hash_password("admin123"),
-                "role": "admin",
-                "created_at": datetime.now().isoformat()
-            }
-        ]
-        with open(USERS_FILE, 'w') as f:
-            json.dump(users_data, f, indent=2)
-
-def generate_qr_code(data):
-    try:
-        qr = qrcode.QRCode(version=1, box_size=10, border=4)
-        qr.add_data(data)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        buffered = BytesIO()
-        img.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode()
-        return f"data:image/png;base64,{img_str}"
-    except Exception as e:
-        logger.error(f"QR error: {e}")
-        return None
-
-def get_wireguard_status():
-    try:
-        result = subprocess.run(['sudo', 'wg', 'show'], capture_output=True, text=True)
-        if result.returncode == 0:
-            return {'status': 'active', 'clients': len(result.stdout.split('peer:')) - 1}
-        return {'status': 'inactive', 'clients': 0}
-    except:
-        return {'status': 'error', 'clients': 0}
-
-def create_wireguard_client(client_name):
-    try:
-        result = subprocess.run(
-            ['/home/lev/scripts/wireguard/create_client.sh', client_name],
-            capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            config_path = f"/home/lev/wireguard-clients/{client_name}.conf"
-            with open(config_path, 'r') as f:
-                config_content = f.read()
-            qr_code = generate_qr_code(config_content)
-            return {'success': True, 'config_content': config_content, 'qr_code': qr_code}
-        return {'success': False, 'error': result.stderr}
-    except Exception as e:
-        return {'success': False, 'error': str(e)}
-
-@app.before_request
-def initialize_app():
-    if not hasattr(app, 'initialized'):
-        init_directories()
-        create_default_users()
-        app.initialized = True
-
-@app.route('/')
-def index():
-    return redirect(url_for('login'))
-
-@app.route('/login')
-def login():
-    return render_template('login.html')
-
-@app.route('/vpn/')
-def vpn_management():
-    return render_template('vpn_management.html')
-
-@app.route('/vpn/api/status')
-def api_vpn_status():
-    return jsonify({'wireguard': get_wireguard_status()})
-
-@app.route('/vpn/api/create_client', methods=['POST'])
-def api_create_client():
-    data = request.get_json()
-    client_name = data.get('name', '')
-    if not client_name:
-        return jsonify({'success': False, 'message': 'Имя клиента обязательно'}), 400
-    result = create_wireguard_client(client_name)
-    if result['success']:
-        return jsonify({
-            'success': True, 
-            'message': f'Клиент {client_name} создан',
-            'client_info': {
-                'name': client_name,
-                'config_content': result['config_content'],
-                'qr_code': result.get('qr_code')
-            }
-        })
-    return jsonify({'success': False, 'message': result['error']}), 500
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
-APP_EOF
-
-# 11. Перезапустить auth-system
-sudo docker-compose restart auth-system
-
-echo ""
-echo "🎉 WIREGUARD ПЕРЕНАСТРОЕН!"
-echo "========================"
-echo "✅ Сервер: порт 51820/udp"
-echo "✅ Подсеть: 10.8.0.0/24"
-echo "✅ DNS: 8.8.8.8, 1.1.1.1"
-echo "✅ Обход блокировок: включен"
-echo "✅ Доступ к интернету: включен"
-echo "📁 Клиенты: ~/wireguard-clients/"
-echo "🔧 Управление: http://localhost/vpn/"
+```bash
+# Download and run
+wget https://raw.githubusercontent.com/levgh/serverins/main/wireguard/w.sh
+chmod +x w.sh
+sudo ./w.sh
