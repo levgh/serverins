@@ -200,8 +200,26 @@ AllowedIPs = 10.0.0.2/32
 EOF
 
 # Create client config в ПРАВИЛЬНОЙ папке clients
-rm -f /home/lev/vpn/clients/client01.conf
-cat > "/home/lev/vpn/clients/client01.conf" << EOF
+if [ ! -f "/home/lev/vpn/clients/client01.conf" ]; then
+    cat > "/home/lev/vpn/clients/client01.conf" << EOF
+[Interface]
+PrivateKey = $CLIENT_PRIVATE_KEY
+Address = 10.0.0.2/24
+DNS = 8.8.8.8, 1.1.1.1
+
+[Peer]
+PublicKey = $SERVER_PUBLIC_KEY
+Endpoint = $SERVER_IP:$VPN_PORT
+AllowedIPs = 0.0.0.0/0
+EOF
+    log_success "VPN client config created: /home/lev/vpn/clients/client01.conf"
+else
+    log_info "VPN client config already exists: /home/lev/vpn/clients/client01.conf"
+fi
+    log_success "VPN client config created: /home/lev/vpn/clients/client01.conf"
+else
+    log_info "VPN client config already exists: /home/lev/vpn/clients/client01.conf"
+fi
 [Interface]
 PrivateKey = $CLIENT_PRIVATE_KEY
 Address = 10.0.0.2/24
