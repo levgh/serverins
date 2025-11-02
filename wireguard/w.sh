@@ -44,7 +44,7 @@ log_step() {
 }
 
 # --- Configuration ---
-CURRENT_USER=$(whoami)
+CURRENT_USER="lev"
 SERVER_IP=$(hostname -I | awk '{print $1}')
 VPN_PORT=51820
 
@@ -68,11 +68,12 @@ sudo docker stop $(sudo docker ps -aq) 2>/dev/null || true
 sudo docker rm $(sudo docker ps -aq) 2>/dev/null || true
 
 log_step "Cleaning up old configurations..."
-sudo rm -rf /home/$CURRENT_USER/docker
-sudo rm -rf /home/$CURRENT_USER/nextcloud
-sudo rm -rf /home/$CURRENT_USER/data
-sudo rm -rf /home/$CURRENT_USER/media
-sudo rm -rf /home/$CURRENT_USER/vpn
+sudo rm -rf /home/lev/docker
+sudo rm -rf /home/lev/nextcloud
+sudo rm -rf /home/lev/data
+sudo rm -rf /home/lev/media
+sudo rm -rf /home/lev/vpn
+sudo rm -rf /home/lev/scripts
 
 # --- System Preparation ---
 log_header "SYSTEM PREPARATION"
@@ -87,7 +88,7 @@ sudo apt install -y curl wget git docker.io docker-compose nginx python3 python3
 log_step "Configuring Docker..."
 sudo systemctl enable docker
 sudo systemctl start docker
-sudo usermod -aG docker $CURRENT_USER
+sudo usermod -aG docker lev
 
 # --- Directory Structure ---
 log_header "CREATING DIRECTORY STRUCTURE"
@@ -96,6 +97,7 @@ create_dirs=(
     "docker/auth-system/app"
     "docker/auth-system/app/templates"
     "docker/auth-system/app/static"
+    "docker/auth-system/app/data"
     "docker/jellyfin/config"
     "docker/portainer/data"
     "docker/qbittorrent/config"
@@ -114,19 +116,21 @@ create_dirs=(
     "scripts/management"
     "scripts/vpn"
     "vpn/clients"
+    ".config"
 )
 
 for dir in "${create_dirs[@]}"; do
-    mkdir -p "/home/$CURRENT_USER/$dir"
-    log_success "Created: /home/$CURRENT_USER/$dir"
+    mkdir -p "/home/lev/$dir"
+    log_success "Created: /home/lev/$dir"
 done
 
-sudo chown -R $CURRENT_USER:$CURRENT_USER /home/$CURRENT_USER/docker
-sudo chown -R $CURRENT_USER:$CURRENT_USER /home/$CURRENT_USER/nextcloud
-sudo chown -R $CURRENT_USER:$CURRENT_USER /home/$CURRENT_USER/media
-sudo chown -R $CURRENT_USER:$CURRENT_USER /home/$CURRENT_USER/data
-sudo chown -R $CURRENT_USER:$CURRENT_USER /home/$CURRENT_USER/vpn
-sudo chown -R $CURRENT_USER:$CURRENT_USER /home/$CURRENT_USER/scripts
+sudo chown -R lev:lev /home/lev/docker
+sudo chown -R lev:lev /home/lev/nextcloud
+sudo chown -R lev:lev /home/lev/media
+sudo chown -R lev:lev /home/lev/data
+sudo chown -R lev:lev /home/lev/vpn
+sudo chown -R lev:lev /home/lev/scripts
+sudo chown -R lev:lev /home/lev/.config
 
 # --- Security Configuration ---
 log_header "SECURITY CONFIGURATION"
@@ -136,18 +140,17 @@ AUTH_SECRET=$(openssl rand -hex 32)
 JELLYFIN_API_KEY=$(openssl rand -hex 32)
 ADMIN_PASS="admin123"
 
-mkdir -p /home/$CURRENT_USER/.config
-cat > "/home/$CURRENT_USER/.config/server_env" << EOF
+cat > "/home/lev/.config/server_env" << EOF
 DOMAIN="homeserver"
 SERVER_IP="$SERVER_IP"
-CURRENT_USER="$CURRENT_USER"
+CURRENT_USER="lev"
 AUTH_SECRET="$AUTH_SECRET"
 JELLYFIN_API_KEY="$JELLYFIN_API_KEY"
 ADMIN_PASS="$ADMIN_PASS"
 VPN_PORT="$VPN_PORT"
 EOF
 
-chmod 600 "/home/$CURRENT_USER/.config/server_env"
+chmod 600 "/home/lev/.config/server_env"
 
 # --- WireGuard VPN Setup ---
 log_header "WIREGUARD VPN SETUP"
@@ -205,7 +208,7 @@ AllowedIPs = 10.0.0.2/32
 EOF
 
 # Create client config
-cat > "/home/$CURRENT_USER/vpn/$CLIENT_NAME.conf" << EOF
+cat > "/home/lev/vpn/client01.conf" << EOF
 [Interface]
 PrivateKey = $CLIENT_PRIVATE_KEY
 Address = 10.0.0.2/24
@@ -219,8 +222,8 @@ EOF
 
 # Generate QR code for client
 if command -v qrencode &> /dev/null; then
-    qrencode -t png -o "/home/$CURRENT_USER/vpn/$CLIENT_NAME.png" < "/home/$CURRENT_USER/vpn/$CLIENT_NAME.conf"
-    log_success "QR code generated: /home/$CURRENT_USER/vpn/$CLIENT_NAME.png"
+    qrencode -t png -o "/home/lev/vpn/client01.png" < "/home/lev/vpn/client01.conf"
+    log_success "QR code generated: /home/lev/vpn/client01.png"
 fi
 
 log_step "Starting WireGuard service..."
@@ -248,10 +251,10 @@ fi
 # --- Docker Compose Configuration ---
 log_header "DOCKER CONFIGURATION"
 
-PUID=$(id -u $CURRENT_USER)
-PGID=$(id -g $CURRENT_USER)
+PUID=$(id -u lev)
+PGID=$(id -g lev)
 
-cat > "/home/$CURRENT_USER/docker/docker-compose.yml" << EOF
+cat > "/home/lev/docker/docker-compose.yml" << EOF
 version: '3.8'
 
 services:
@@ -264,9 +267,9 @@ services:
     environment:
       - AUTH_SECRET=$AUTH_SECRET
     volumes:
-      - /home/$CURRENT_USER/docker/auth-system/app/data:/app/data
-      - /home/$CURRENT_USER/data/users:/app/data/users
-      - /home/$CURRENT_USER/data/logs:/app/data/logs
+      - /home/lev/docker/auth-system/app/data:/app/data
+      - /home/lev/data/users:/app/data/users
+      - /home/lev/data/logs:/app/data/logs
     networks:
       - nginx-network
 
@@ -278,10 +281,10 @@ services:
     ports:
       - "8096:8096"
     volumes:
-      - /home/$CURRENT_USER/docker/jellyfin/config:/config
-      - /home/$CURRENT_USER/media/movies:/media/movies:ro
-      - /home/$CURRENT_USER/media/tv:/media/tv:ro
-      - /home/$CURRENT_USER/media/music:/media/music:ro
+      - /home/lev/docker/jellyfin/config:/config
+      - /home/lev/media/movies:/media/movies:ro
+      - /home/lev/media/tv:/media/tv:ro
+      - /home/lev/media/music:/media/music:ro
     environment:
       - JELLYFIN_API_KEY=$JELLYFIN_API_KEY
     networks:
@@ -298,10 +301,10 @@ services:
       - NEXTCLOUD_ADMIN_PASSWORD=$ADMIN_PASS
       - NEXTCLOUD_TRUSTED_DOMAINS=$SERVER_IP localhost 127.0.0.1
     volumes:
-      - /home/$CURRENT_USER/nextcloud/data:/var/www/html/data
-      - /home/$CURRENT_USER/nextcloud/config:/var/www/html/config
-      - /home/$CURRENT_USER/nextcloud/apps:/var/www/html/custom_apps
-      - /home/$CURRENT_USER/nextcloud/themes:/var/www/html/themes
+      - /home/lev/nextcloud/data:/var/www/html/data
+      - /home/lev/nextcloud/config:/var/www/html/config
+      - /home/lev/nextcloud/apps:/var/www/html/custom_apps
+      - /home/lev/nextcloud/themes:/var/www/html/themes
     networks:
       - nginx-network
 
@@ -313,7 +316,7 @@ services:
       - "9001:9000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /home/$CURRENT_USER/docker/portainer/data:/data
+      - /home/lev/docker/portainer/data:/data
     networks:
       - nginx-network
 
@@ -331,8 +334,8 @@ services:
       - "6881:6881"
       - "6881:6881/udp"
     volumes:
-      - /home/$CURRENT_USER/docker/qbittorrent/config:/config
-      - /home/$CURRENT_USER/media/torrents:/downloads
+      - /home/lev/docker/qbittorrent/config:/config
+      - /home/lev/media/torrents:/downloads
     networks:
       - nginx-network
 
@@ -360,7 +363,7 @@ EOF
 # --- iOS-inspired Auth System ---
 log_header "SETTING UP AUTH SYSTEM"
 
-cat > "/home/$CURRENT_USER/docker/auth-system/Dockerfile" << EOF
+cat > "/home/lev/docker/auth-system/Dockerfile" << EOF
 FROM python:3.9-slim
 
 RUN apt-get update && apt-get install -y \\
@@ -382,7 +385,7 @@ EXPOSE 5000
 CMD ["python", "app.py"]
 EOF
 
-cat > "/home/$CURRENT_USER/docker/auth-system/requirements.txt" << EOF
+cat > "/home/lev/docker/auth-system/requirements.txt" << EOF
 Flask==2.3.3
 bcrypt==4.0.1
 PyJWT==2.8.0
@@ -390,7 +393,7 @@ Werkzeug==2.3.7
 EOF
 
 # iOS-inspired Auth Application
-cat > "/home/$CURRENT_USER/docker/auth-system/app/app.py" << 'EOF'
+cat > "/home/lev/docker/auth-system/app/app.py" << 'EOF'
 from flask import Flask, render_template, request, redirect, session, flash, jsonify
 import bcrypt
 import json
@@ -522,7 +525,7 @@ if __name__ == '__main__':
 EOF
 
 # iOS-inspired Login Template
-cat > "/home/$CURRENT_USER/docker/auth-system/app/templates/login.html" << 'EOF'
+cat > "/home/lev/docker/auth-system/app/templates/login.html" << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -710,7 +713,7 @@ cat > "/home/$CURRENT_USER/docker/auth-system/app/templates/login.html" << 'EOF'
 EOF
 
 # iOS-inspired Dashboard Template
-cat > "/home/$CURRENT_USER/docker/auth-system/app/templates/dashboard.html" << 'EOF'
+cat > "/home/lev/docker/auth-system/app/templates/dashboard.html" << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -916,7 +919,7 @@ EOF
 # --- Nginx Configuration ---
 log_header "CONFIGURING NGINX REVERSE PROXY"
 
-cat > "/home/$CURRENT_USER/docker/nginx.conf" << 'EOF'
+cat > "/home/lev/docker/nginx.conf" << 'EOF'
 events {
     worker_connections 1024;
 }
@@ -1004,7 +1007,7 @@ EOF
 # --- iOS-inspired Landing Page ---
 log_header "CREATING LANDING PAGE"
 
-cat > "/home/$CURRENT_USER/docker/dashboard/index.html" << 'EOF'
+cat > "/home/lev/docker/dashboard/index.html" << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1169,12 +1172,12 @@ EOF
 # --- VPN Management Scripts ---
 log_header "SETTING UP VPN MANAGEMENT"
 
-cat > "/home/$CURRENT_USER/scripts/vpn/vpn-manager.sh" << 'EOF'
+cat > "/home/lev/scripts/vpn/vpn-manager.sh" << 'EOF'
 #!/bin/bash
 
-source "/home/$(whoami)/.config/server_env"
+source "/home/lev/.config/server_env"
 
-VPN_DIR="/home/$CURRENT_USER/vpn"
+VPN_DIR="/home/lev/vpn"
 WG_CONFIG="/etc/wireguard/wg0.conf"
 
 show_usage() {
@@ -1336,48 +1339,48 @@ case "$1" in
 esac
 EOF
 
-chmod +x "/home/$CURRENT_USER/scripts/vpn/vpn-manager.sh"
+chmod +x "/home/lev/scripts/vpn/vpn-manager.sh"
 
 # --- Management Scripts ---
 log_header "SETTING UP MANAGEMENT SCRIPTS"
 
-cat > "/home/$CURRENT_USER/scripts/management/server-manager.sh" << 'EOF'
+cat > "/home/lev/scripts/management/server-manager.sh" << 'EOF'
 #!/bin/bash
 
-source "/home/$(whoami)/.config/server_env"
+source "/home/lev/.config/server_env"
 
 case "$1" in
     "start")
-        cd "/home/$CURRENT_USER/docker" && docker-compose up -d
+        cd "/home/lev/docker" && docker-compose up -d
         sudo systemctl start wg-quick@wg0 2>/dev/null || true
         echo "✅ All services started"
         ;;
     "stop")
-        cd "/home/$CURRENT_USER/docker" && docker-compose down
+        cd "/home/lev/docker" && docker-compose down
         sudo systemctl stop wg-quick@wg0 2>/dev/null || true
         echo "✅ All services stopped"
         ;;
     "restart")
-        cd "/home/$CURRENT_USER/docker" && docker-compose restart
+        cd "/home/lev/docker" && docker-compose restart
         sudo systemctl restart wg-quick@wg0 2>/dev/null || true
         echo "✅ All services restarted"
         ;;
     "status")
         echo "=== DOCKER SERVICES ==="
-        cd "/home/$CURRENT_USER/docker" && docker-compose ps
+        cd "/home/lev/docker" && docker-compose ps
         echo ""
         echo "=== VPN STATUS ==="
-        "/home/$CURRENT_USER/scripts/vpn/vpn-manager.sh" status
+        "/home/lev/scripts/vpn/vpn-manager.sh" status
         ;;
     "logs")
-        cd "/home/$CURRENT_USER/docker" && docker-compose logs -f
+        cd "/home/lev/docker" && docker-compose logs -f
         ;;
     "vpn")
-        "/home/$CURRENT_USER/scripts/vpn/vpn-manager.sh" "$2"
+        "/home/lev/scripts/vpn/vpn-manager.sh" "$2"
         ;;
     "update")
-        cd "/home/$CURRENT_USER/docker" && docker-compose pull
-        cd "/home/$CURRENT_USER/docker" && docker-compose up -d --build
+        cd "/home/lev/docker" && docker-compose pull
+        cd "/home/lev/docker" && docker-compose up -d --build
         echo "✅ System updated"
         ;;
     *)
@@ -1396,13 +1399,13 @@ case "$1" in
 esac
 EOF
 
-chmod +x "/home/$CURRENT_USER/scripts/management/server-manager.sh"
+chmod +x "/home/lev/scripts/management/server-manager.sh"
 
 # --- Final Setup ---
 log_header "STARTING SERVICES"
 
 log_step "Building and starting containers..."
-cd "/home/$CURRENT_USER/docker"
+cd "/home/lev/docker"
 sudo docker-compose up -d --build
 
 log_step "Waiting for services to initialize..."
