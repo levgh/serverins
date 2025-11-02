@@ -94,9 +94,12 @@ log_header "CREATING DIRECTORY STRUCTURE"
 
 create_dirs=(
     "docker/auth-system/app"
+    "docker/auth-system/app/templates"
+    "docker/auth-system/app/static"
     "docker/jellyfin/config"
     "docker/portainer/data"
     "docker/qbittorrent/config"
+    "docker/dashboard"
     "nextcloud/data"
     "nextcloud/config"
     "nextcloud/apps"
@@ -115,6 +118,7 @@ create_dirs=(
 
 for dir in "${create_dirs[@]}"; do
     mkdir -p "/home/$CURRENT_USER/$dir"
+    log_success "Created: /home/$CURRENT_USER/$dir"
 done
 
 sudo chown -R $CURRENT_USER:$CURRENT_USER /home/$CURRENT_USER/docker
@@ -122,6 +126,7 @@ sudo chown -R $CURRENT_USER:$CURRENT_USER /home/$CURRENT_USER/nextcloud
 sudo chown -R $CURRENT_USER:$CURRENT_USER /home/$CURRENT_USER/media
 sudo chown -R $CURRENT_USER:$CURRENT_USER /home/$CURRENT_USER/data
 sudo chown -R $CURRENT_USER:$CURRENT_USER /home/$CURRENT_USER/vpn
+sudo chown -R $CURRENT_USER:$CURRENT_USER /home/$CURRENT_USER/scripts
 
 # --- Security Configuration ---
 log_header "SECURITY CONFIGURATION"
@@ -385,9 +390,6 @@ Werkzeug==2.3.7
 EOF
 
 # iOS-inspired Auth Application
-mkdir -p "/home/$CURRENT_USER/docker/auth-system/app/templates"
-mkdir -p "/home/$CURRENT_USER/docker/auth-system/app/static"
-
 cat > "/home/$CURRENT_USER/docker/auth-system/app/app.py" << 'EOF'
 from flask import Flask, render_template, request, redirect, session, flash, jsonify
 import bcrypt
