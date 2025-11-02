@@ -200,6 +200,7 @@ AllowedIPs = 10.0.0.2/32
 EOF
 
 # Create client config в ПРАВИЛЬНОЙ папке clients
+rm -f /home/lev/vpn/clients/client01.conf
 cat > "/home/lev/vpn/clients/client01.conf" << EOF
 [Interface]
 PrivateKey = $CLIENT_PRIVATE_KEY
