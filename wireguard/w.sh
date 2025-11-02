@@ -67,14 +67,6 @@ sudo docker-compose down 2>/dev/null || true
 sudo docker stop $(sudo docker ps -aq) 2>/dev/null || true
 sudo docker rm $(sudo docker ps -aq) 2>/dev/null || true
 
-log_step "Cleaning up old configurations..."
-sudo rm -rf /home/lev/docker
-sudo rm -rf /home/lev/nextcloud
-sudo rm -rf /home/lev/data
-sudo rm -rf /home/lev/media
-sudo rm -rf /home/lev/vpn
-sudo rm -rf /home/lev/scripts
-
 # --- System Preparation ---
 log_header "SYSTEM PREPARATION"
 
@@ -207,8 +199,8 @@ PublicKey = $CLIENT_PUBLIC_KEY
 AllowedIPs = 10.0.0.2/32
 EOF
 
-# Create client config
-cat > "/home/lev/vpn/client01.conf" << EOF
+# Create client config в ПРАВИЛЬНОЙ папке clients
+cat > "/home/lev/vpn/clients/client01.conf" << EOF
 [Interface]
 PrivateKey = $CLIENT_PRIVATE_KEY
 Address = 10.0.0.2/24
@@ -222,8 +214,8 @@ EOF
 
 # Generate QR code for client
 if command -v qrencode &> /dev/null; then
-    qrencode -t png -o "/home/lev/vpn/client01.png" < "/home/lev/vpn/client01.conf"
-    log_success "QR code generated: /home/lev/vpn/client01.png"
+    qrencode -t png -o "/home/lev/vpn/clients/client01.png" < "/home/lev/vpn/clients/client01.conf"
+    log_success "QR code generated: /home/lev/vpn/clients/client01.png"
 fi
 
 log_step "Starting WireGuard service..."
@@ -1241,7 +1233,7 @@ PublicKey = $CLIENT_PUBLIC_KEY
 AllowedIPs = $CLIENT_IP/32
 EOF
     
-    # Create client config
+    # Create client config в ПРАВИЛЬНОЙ папке clients
     CLIENT_CONFIG="$VPN_DIR/clients/${CLIENT_NAME}.conf"
     cat > "$CLIENT_CONFIG" << CLIENT_EOF
 [Interface]
@@ -1432,8 +1424,8 @@ echo "   👥 User: user / user123"
 echo ""
 log_info "🔒 VPN INFORMATION:"
 echo "   📡 VPN Port: $VPN_PORT"
-echo "   📱 First client: ~/vpn/client01.conf"
-echo "   📟 QR Code: ~/vpn/client01.png"
+echo "   📱 First client: ~/vpn/clients/client01.conf"
+echo "   📟 QR Code: ~/vpn/clients/client01.png"
 echo ""
 log_info "⚙️ MANAGEMENT:"
 echo "   🛠️  Manage: ~/scripts/management/server-manager.sh"
